@@ -2,6 +2,7 @@ package com.hisbaan.orbit.tools
 
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.provider.AlarmClock
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
@@ -11,10 +12,32 @@ import com.hisbaan.orbit.agent.objectSchema
 import com.hisbaan.orbit.agent.string
 import com.hisbaan.orbit.agent.stringProperty
 import com.hisbaan.orbit.providers.ToolSpec
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+/**
+ * Sends set-timer / set-alarm requests to the clock app one at a time. Google Clock handles
+ * them in a single-instance activity and drops a request that arrives while it's still
+ * handling the previous one: two timers in one reply (4 ms apart) made only the first.
+ * Verified on the Pixel: back to back, one timer; 0.3 s apart, both.
+ */
+internal object ClockApp {
+    private const val GAP_MS = 600L
+    private val lock = Mutex()
+    private var lastSentAt = 0L
+
+    suspend fun send(context: Context, intent: Intent) = lock.withLock {
+        val wait = lastSentAt + GAP_MS - SystemClock.elapsedRealtime()
+        if (wait > 0) delay(wait)
+        context.startActivity(intent)
+        lastSentAt = SystemClock.elapsedRealtime()
+    }
+}
 
 /** Timers via the clock app, without showing its UI. Immediate. */
 class SetTimerTool(private val context: Context) : Tool {
@@ -38,7 +61,7 @@ class SetTimerTool(private val context: Context) : Tool {
             .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         args.string("label")?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
-        context.startActivity(intent)
+        ClockApp.send(context, intent)
         return ToolOutcome("Timer set for $seconds seconds.", done = true)
     }
 }
@@ -67,7 +90,7 @@ class SetAlarmTool(private val context: Context) : Tool {
             .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         args.string("label")?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
-        context.startActivity(intent)
+        ClockApp.send(context, intent)
         return ToolOutcome("Alarm set for %02d:%02d.".format(hour, minute), done = true)
     }
 }
