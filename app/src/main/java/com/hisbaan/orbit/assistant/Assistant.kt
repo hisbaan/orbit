@@ -36,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -145,6 +146,23 @@ class Assistant(
         turn?.cancel()
     }
 
+    /**
+     * Answers typed [text] on screen only: no microphone, no speech, no follow-up listening
+     * (typing means talking out loud isn't an option). Replaces any turn in progress.
+     */
+    fun ask(text: String) {
+        val previous = turn
+        turn = scope.launch {
+            previous?.cancelAndJoin()
+            runTextTurn(text)
+        }
+    }
+
+    /** Stops a voice turn that hasn't heard anything yet, e.g. because the user started typing instead. */
+    fun stopListening() {
+        if (_state.value.phase in setOf(Phase.STARTING, Phase.LISTENING)) turn?.cancel()
+    }
+
     private suspend fun runTurn(source: String, device: BluetoothDevice?, typed: String?) {
         val t0 = SystemClock.elapsedRealtime()
         val step: (String) -> Unit = { EventLog.log("turn", "+${SystemClock.elapsedRealtime() - t0}ms $it") }
@@ -191,6 +209,29 @@ class Assistant(
         runAfterTurn(afterTurn)
     }
 
+    private suspend fun runTextTurn(text: String) {
+        val t0 = SystemClock.elapsedRealtime()
+        val step: (String) -> Unit = { EventLog.log("turn", "+${SystemClock.elapsedRealtime() - t0}ms $it") }
+        step("Start: typed")
+        _state.value = AssistantState(phase = Phase.THINKING, transcript = text)
+        val config = settings.current()
+        val afterTurn = mutableListOf<AfterTurnAction>()
+        try {
+            if (!config.isProviderConfigured) {
+                return speak("Orbit isn't set up yet. Add a provider and model in Orbit's settings.", usage = null)
+            }
+            thinkAndSpeak(text, transport(config), config.model, usage = null, afterTurn, step)
+        } finally {
+            _state.update { it.copy(phase = Phase.IDLE) }
+            step("Turn finished")
+        }
+        if (afterTurn.isNotEmpty()) _dismissRequests.tryEmit(Unit)
+        runAfterTurn(afterTurn)
+    }
+
+    private fun transport(config: AppSettings) =
+        OpenAiChatCompletions(config.baseUrl, ApiKeyCredential(config.apiKey), httpClient, config.reasoningEffort)
+
     /**
      * The exchanges of one turn: listen → think and speak. Orbit listens again, without a
      * button press, when its reply asks a question (an answer, a confirmation) or when the
@@ -210,7 +251,7 @@ class Assistant(
         if (!config.isProviderConfigured) {
             return speak("Orbit isn't set up yet. Add a provider and model in Orbit's settings.", usage)
         }
-        val transport = OpenAiChatCompletions(config.baseUrl, ApiKeyCredential(config.apiKey), httpClient, config.reasoningEffort)
+        val transport = transport(config)
 
         var followUp = false
         repeat(MAX_EXCHANGES) { exchange ->
@@ -255,13 +296,14 @@ class Assistant(
     /**
      * Runs the agent and speaks its reply sentence by sentence while it streams in. A trigger
      * during speech stops it; the agent still finishes so its tool results and after-turn
-     * actions aren't lost. Returns null if the model couldn't be reached (already reported).
+     * actions aren't lost. With no [usage] the reply is only shown. Returns null if the model
+     * couldn't be reached (already reported).
      */
     private suspend fun thinkAndSpeak(
         text: String,
         transport: OpenAiChatCompletions,
         model: String,
-        usage: PlaybackUsage,
+        usage: PlaybackUsage?,
         afterTurn: MutableList<AfterTurnAction>,
         step: (String) -> Unit,
     ): Reply? = coroutineScope {
@@ -271,7 +313,7 @@ class Assistant(
         var interrupted = false
         while (interrupts.tryReceive().isSuccess) Unit // drop presses from before this reply
 
-        val speaking = launch { tts.speakAll(sentences, usage) }
+        val speaking = launch { if (usage != null) tts.speakAll(sentences, usage) }
         val watcher = launch {
             interrupts.receive()
             interrupted = true
@@ -280,7 +322,7 @@ class Assistant(
             speaking.cancel()
         }
         fun enqueue(sentence: String) {
-            if (interrupted) return
+            if (interrupted || usage == null) return
             if (_state.value.phase != Phase.SPEAKING) {
                 step("First sentence ready")
                 _state.update { it.copy(phase = Phase.SPEAKING) }
@@ -316,7 +358,10 @@ class Assistant(
             afterTurn += result.afterTurn
             step("Reply: ${result.reply}")
             chunker.flush()?.let(::enqueue)
-            if (shown.isBlank()) enqueue("Done.")
+            if (shown.isBlank()) {
+                _state.update { it.copy(reply = "Done.") }
+                enqueue("Done.")
+            }
             sentences.close()
             speaking.join()
             Reply(result.reply, interrupted)
@@ -338,7 +383,9 @@ class Assistant(
         }
     }
 
-    private suspend fun speak(text: String, usage: PlaybackUsage, error: String? = null) {
+    /** Says [text], or with no [usage] only shows it. */
+    private suspend fun speak(text: String, usage: PlaybackUsage?, error: String? = null) {
+        if (usage == null) return _state.update { it.copy(reply = text, error = error) }
         _state.update { it.copy(phase = Phase.SPEAKING, reply = text, error = error) }
         tts.speak(text, usage)
     }

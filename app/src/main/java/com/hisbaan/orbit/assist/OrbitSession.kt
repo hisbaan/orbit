@@ -6,10 +6,16 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
 import android.view.View
+import android.view.WindowManager
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.core.os.BundleCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -52,16 +58,26 @@ class OrbitSession(context: Context) :
     override val viewModelStore = ViewModelStore()
 
     private val app get() = context.applicationContext as OrbitApp
+    private var isWindowShown = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** Drives the card's slide in and out; replaced when the window hides so the next show animates. */
+    private var cardVisibility by mutableStateOf(MutableTransitionState(false))
 
     override fun onCreate() {
         super.onCreate()
+        window.window?.let {
+            // The card animates itself; the window shouldn't as well. Insets (IME, nav bar) go to Compose
+            // (see stopPanning).
+            it.setWindowAnimations(0)
+            WindowCompat.setDecorFitsSystemWindows(it, false)
+        }
         savedState.performAttach()
         savedState.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         // Stays up after the turn so the reply can be read; closes itself only to get out of
         // the way of an app an after-turn action opens.
-        scope.launch { app.assistant.dismissRequests.collect { hide() } }
+        scope.launch { app.assistant.dismissRequests.collect { animateOut() } }
     }
 
     override fun onCreateContentView(): View = ComposeView(context).apply {
@@ -70,13 +86,27 @@ class OrbitSession(context: Context) :
         setViewTreeViewModelStoreOwner(this@OrbitSession)
         setContent {
             val state by app.assistant.state.collectAsState()
+            val visible = cardVisibility
+            // Hide the window once the card has finished sliding out.
+            LaunchedEffect(visible, visible.isIdle, visible.currentState) {
+                if (visible.isIdle && !visible.currentState && !visible.targetState && isWindowShown) {
+                    EventLog.log("assist", "Card slid out; hiding")
+                    hide()
+                }
+            }
             OrbitTheme {
                 AssistantOverlay(
                     state,
+                    visible,
                     OverlayActions(
                         dismiss = ::close,
                         talk = { app.assistant.trigger("overlay", null) },
+                        ask = app.assistant::ask,
                         stop = app.assistant::cancel,
+                        typing = {
+                            stopPanning()
+                            app.assistant.stopListening()
+                        },
                         openApp = ::openApp,
                     ),
                 )
@@ -87,6 +117,8 @@ class OrbitSession(context: Context) :
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        isWindowShown = true
+        cardVisibility.targetState = true
         val source = args?.getString(ARG_SOURCE) ?: if (showFlags and SHOW_SOURCE_ASSIST_GESTURE != 0) "assist gesture" else "session"
         val device = args?.let { BundleCompat.getParcelable(it, ARG_DEVICE, BluetoothDevice::class.java) }
         EventLog.log("assist", "Overlay shown: source=$source flags=$showFlags")
@@ -96,10 +128,22 @@ class OrbitSession(context: Context) :
     override fun onHide() {
         EventLog.log("assist", "Overlay hidden (turn ${if (app.assistant.state.value.phase == Phase.IDLE) "idle" else "continues"})")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
+        isWindowShown = false
+        cardVisibility = MutableTransitionState(false)
         super.onHide()
     }
 
     override fun onBackPressed() = close()
+
+    override fun onCloseSystemDialogs() {
+        EventLog.log("assist", "System asked to close dialogs")
+        super.onCloseSystemDialogs()
+    }
+
+    override fun onLockscreenShown() {
+        EventLog.log("assist", "Lock screen shown")
+        super.onLockscreenShown()
+    }
 
     override fun onDestroy() {
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
@@ -110,7 +154,27 @@ class OrbitSession(context: Context) :
 
     private fun close() {
         app.assistant.cancel()
-        hide()
+        animateOut()
+    }
+
+    /**
+     * Compose lifts the card by the IME insets itself, but the session window is in adjustPan,
+     * so the system also scrolled the whole window up to the focused field and the card flew
+     * up twice the keyboard's height. Called when the field gains focus (the window is
+     * attached by then, and the keyboard isn't up yet). The session's dialog doesn't pass
+     * attribute changes on to the window manager, so they're pushed directly.
+     */
+    private fun stopPanning() {
+        val w = window.window ?: return
+        if (!w.decorView.isAttachedToWindow) return
+        w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        context.getSystemService(WindowManager::class.java).updateViewLayout(w.decorView, w.attributes)
+    }
+
+    /** Slides the card away; the window hides when it's gone. */
+    private fun animateOut() {
+        EventLog.log("assist", "Closing overlay")
+        cardVisibility.targetState = false
     }
 
     private fun openApp() {
