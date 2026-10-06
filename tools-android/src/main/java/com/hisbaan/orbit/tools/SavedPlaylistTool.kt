@@ -38,6 +38,8 @@ class PlaySavedPlaylistTool(
     private val sessions: MediaSessions,
     private val playlists: () -> List<SavedPlaylist>,
 ) : Tool {
+    override val confirms = true
+
     override val spec: ToolSpec
         get() {
             val names = playlists().map { it.name }
@@ -66,7 +68,8 @@ class PlaySavedPlaylistTool(
         val shuffle = args.boolean("shuffle") == true
         return ToolOutcome(
             "Queued: the '${playlist.name}' playlist${if (shuffle) " on shuffle" else ""} will start after you finish speaking.",
-            AfterTurnAction("play the '${playlist.name}' playlist", needsUnlock = true) {
+            done = true,
+            afterTurn = AfterTurnAction("play the '${playlist.name}' playlist", needsUnlock = true) {
                 openInYouTubeMusic(context, "https://music.youtube.com/watch?list=${playlist.playlistId}")
                 if (shuffle) {
                     // The session reflects the new queue a moment after the link opens.

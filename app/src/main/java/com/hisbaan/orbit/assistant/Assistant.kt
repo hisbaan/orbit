@@ -349,6 +349,13 @@ class Assistant(
                         _state.update { it.copy(reply = shown.toString().trim()) }
                         chunker.add(delta).forEach(::enqueue)
                     },
+                    // A confirmation written alongside a tool call that didn't go through.
+                    // A one-sentence confirmation is still in the chunker, so nothing was said.
+                    onDiscardText = {
+                        shown.setLength(0)
+                        chunker.clear()
+                        _state.update { it.copy(reply = null) }
+                    },
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -365,8 +372,9 @@ class Assistant(
             step("Reply: ${result.reply}")
             chunker.flush()?.let(::enqueue)
             if (shown.isBlank()) {
-                _state.update { it.copy(reply = "Done.") }
-                enqueue("Done.")
+                val fallback = result.reply.ifBlank { "Done." }
+                _state.update { it.copy(reply = fallback) }
+                enqueue(fallback)
             }
             sentences.close()
             speaking.join()

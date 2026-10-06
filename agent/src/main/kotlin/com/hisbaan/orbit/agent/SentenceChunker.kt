@@ -21,6 +21,9 @@ class SentenceChunker(private val maxChunk: Int = 160) {
     /** Whatever is left once the stream has ended. */
     fun flush(): String? = take(buffer.length)
 
+    /** Drops text not yet returned as a sentence. */
+    fun clear() = buffer.setLength(0)
+
     private fun take(end: Int): String? {
         val piece = clean(buffer.substring(0, end))
         buffer.delete(0, end)

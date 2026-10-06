@@ -16,6 +16,13 @@ interface Tool {
     /** False hides the tool from the model, e.g. while the service behind it isn't set up. */
     val available: Boolean get() = true
 
+    /**
+     * The tool performs an action and reports [ToolOutcome.done] when it goes through. The
+     * agent asks the model, in an extra argument, for the sentence to say if it works, so the
+     * turn can end without a second model call. See [Agent].
+     */
+    val confirms: Boolean get() = false
+
     /** Runs the tool. Throwing is fine: the agent reports the error back to the model. */
     suspend fun invoke(args: JsonObject): ToolOutcome
 }
@@ -24,8 +31,15 @@ interface Tool {
  * [result] goes back to the model. [afterTurn] is work that must wait until the voice turn
  * has ended (route released, focus abandoned): anything that starts its own audio, opens
  * another app or places a call. See PLAN.md, Phase 1 "Tool timing".
+ *
+ * [done]: the action went through and the model has nothing to learn from [result], so the
+ * confirmation it wrote into the call can be the whole reply (see [Tool.confirms]).
  */
-data class ToolOutcome(val result: String, val afterTurn: AfterTurnAction? = null)
+data class ToolOutcome(
+    val result: String,
+    val afterTurn: AfterTurnAction? = null,
+    val done: Boolean = false,
+)
 
 class AfterTurnAction(
     val description: String,

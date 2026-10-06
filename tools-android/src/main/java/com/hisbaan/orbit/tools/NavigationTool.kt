@@ -20,6 +20,8 @@ import kotlinx.serialization.json.JsonObject
  * (`geo:`). After turn: Maps voice guidance takes audio focus.
  */
 class NavigationTool(private val context: Context) : Tool {
+    override val confirms = true
+
     // Google Maps navigation intent modes. Two-wheeler is only offered in some countries.
     private val modes = mapOf("driving" to "d", "two_wheeler" to "l", "bicycling" to "b", "walking" to "w")
 
@@ -43,6 +45,7 @@ class NavigationTool(private val context: Context) : Tool {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return ToolOutcome(
             result = "Queued: navigation to '$destination' will start after you finish speaking.",
+            done = true,
             afterTurn = AfterTurnAction("navigate to '$destination'", needsUnlock = true) {
                 try {
                     context.startActivity(maps)

@@ -26,6 +26,8 @@ import kotlinx.serialization.json.JsonObject
  * After turn: the call needs the SCO link Orbit is holding.
  */
 class CallContactTool(private val context: Context) : Tool {
+    override val confirms = true
+
     private val numberTypes = mapOf("mobile" to Phone.TYPE_MOBILE, "home" to Phone.TYPE_HOME, "work" to Phone.TYPE_WORK)
 
     override val spec = ToolSpec(
@@ -94,6 +96,7 @@ class CallContactTool(private val context: Context) : Tool {
                 "Queued: the dialer will open with $label's number (no call permission, so the user must press call)."
             },
             afterTurn = AfterTurnAction("call $label", needsUnlock = !canCall) { context.startActivity(intent) },
+            done = true,
         )
     }
 
@@ -126,6 +129,8 @@ class CallContactTool(private val context: Context) : Tool {
 
 /** Opens an installed app by name. After turn. */
 class OpenAppTool(private val context: Context) : Tool {
+    override val confirms = true
+
     override val spec = ToolSpec(
         name = "open_app",
         description = "Open an installed app by name. Opens after you finish speaking.",
@@ -148,6 +153,7 @@ class OpenAppTool(private val context: Context) : Tool {
             ?: return ToolOutcome("Error: ${match.first} can't be launched.")
         return ToolOutcome(
             result = "Queued: ${match.first} will open after you finish speaking.",
+            done = true,
             afterTurn = AfterTurnAction("open ${match.first}", needsUnlock = true) { context.startActivity(launch) },
         )
     }

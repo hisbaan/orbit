@@ -5,9 +5,13 @@ import com.hisbaan.orbit.providers.ChatMessage
 import com.hisbaan.orbit.providers.ChatRequest
 import com.hisbaan.orbit.providers.ChatTransport
 import com.hisbaan.orbit.providers.ToolCall
+import com.hisbaan.orbit.providers.ToolSpec
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 
 data class AgentResult(
@@ -18,8 +22,12 @@ data class AgentResult(
 
 /**
  * The conversation loop: sends the user's words to the model, runs the tools it asks for,
- * feeds results back, and repeats until the model answers in text. Text is streamed to
- * `onText` as it arrives, from every step.
+ * feeds results back, and repeats until the model answers in text. [Tool.confirms] tools get
+ * a [CONFIRMATION_ARG] the model fills with what to say if the action works. A step whose
+ * tools are all [ToolOutcome.done] and that carries a confirmation ends the turn without
+ * another model call; an empty confirmation means the model has more calls to make.
+ * Text is streamed to `onText` as it arrives; a tool step's text that doesn't end the turn
+ * is withdrawn with `onDiscardText`.
  *
  * History survives for [historyTtlMs] after a turn so a quick follow-up continues the
  * conversation; after that the next turn starts fresh.
@@ -41,6 +49,7 @@ class Agent(
         model: String,
         onToolCall: (ToolCall) -> Unit = {},
         onText: (String) -> Unit = {},
+        onDiscardText: () -> Unit = {},
     ): AgentResult {
         if (history.isNotEmpty() && clock() - lastTurnEndedAt > historyTtlMs) {
             EventLog.log("agent", "History expired; starting a new conversation")
@@ -55,7 +64,7 @@ class Agent(
                 val request = ChatRequest(
                     model = model,
                     messages = listOf(ChatMessage.System(systemPrompt())) + history,
-                    tools = tools.filter { it.available }.map { it.spec },
+                    tools = tools.filter { it.available }.map(::specFor),
                 )
                 val response = transport.complete(request, onText)
                 EventLog.log(
@@ -68,15 +77,28 @@ class Agent(
                     return AgentResult(response.text.trim(), afterTurn, calls)
                 }
                 history += ChatMessage.Assistant(response.text.ifBlank { null }, response.toolCalls)
-                // Text before a tool call ("Sure.") and the final reply are separate sentences.
-                if (response.text.isNotBlank()) onText("\n")
+                var allDone = true
+                val written = mutableListOf<String>()
                 for (call in response.toolCalls) {
                     onToolCall(call)
                     calls += call
-                    val outcome = runTool(call)
+                    val (outcome, modelSays) = runTool(call)
                     outcome.afterTurn?.let(afterTurn::add)
+                    allDone = allDone && outcome.done
+                    modelSays?.let(written::add)
                     history += ChatMessage.ToolResult(call.id, outcome.result)
                 }
+                // Every action went through and the model said what to say: end the turn now
+                // instead of asking the model again, saving a round trip. Text it wrote alongside
+                // the calls wins over the confirmation arguments.
+                if (allDone && (written.isNotEmpty() || response.text.isNotBlank())) {
+                    val reply = response.text.trim().ifEmpty { written.joinToString(" ").also(onText) }
+                    EventLog.log("agent", "Step ${step + 1}: actions confirmed; no follow-up call")
+                    return AgentResult(reply, afterTurn, calls)
+                }
+                // A failure or a lookup: text written alongside the calls is withdrawn and the
+                // next step answers with the results in hand.
+                if (response.text.isNotBlank()) onDiscardText()
             }
             EventLog.log("agent", "Gave up after $maxSteps steps")
             val reply = "Sorry, I couldn't finish that."
@@ -93,13 +115,30 @@ class Agent(
 
     fun reset() = history.clear()
 
-    private suspend fun runTool(call: ToolCall): ToolOutcome {
-        val tool = toolsByName[call.name] ?: return ToolOutcome("Error: unknown tool '${call.name}'")
-        val args = try {
+    /** The tool's spec, with [CONFIRMATION_ARG] added (and required) for [Tool.confirms] tools. */
+    private fun specFor(tool: Tool): ToolSpec {
+        val spec = tool.spec
+        if (!tool.confirms) return spec
+        val params = spec.parameters
+        val properties = JsonObject((params["properties"] as? JsonObject).orEmpty() + (CONFIRMATION_ARG to CONFIRMATION_SCHEMA))
+        val required = JsonArray((params["required"] as? JsonArray).orEmpty() + JsonPrimitive(CONFIRMATION_ARG))
+        return spec.copy(parameters = JsonObject(params + ("properties" to properties) + ("required" to required)))
+    }
+
+    /** Runs [call]; also returns the [CONFIRMATION_ARG] the model wrote, which the tool never sees. */
+    private suspend fun runTool(call: ToolCall): Pair<ToolOutcome, String?> {
+        val tool = toolsByName[call.name] ?: return ToolOutcome("Error: unknown tool '${call.name}'") to null
+        val parsed = try {
             if (call.argumentsJson.isBlank()) JsonObject(emptyMap()) else Json.parseToJsonElement(call.argumentsJson).jsonObject
         } catch (e: Exception) {
-            return ToolOutcome("Error: arguments were not valid JSON")
+            return ToolOutcome("Error: arguments were not valid JSON") to null
         }
+        val modelSays = (parsed[CONFIRMATION_ARG] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        val args = JsonObject(parsed - CONFIRMATION_ARG)
+        return runTool(tool, call, args) to modelSays
+    }
+
+    private suspend fun runTool(tool: Tool, call: ToolCall, args: JsonObject): ToolOutcome {
         return try {
             tool.invoke(args).also {
                 EventLog.log("tool", "${call.name}(${call.argumentsJson}) -> ${it.result}${it.afterTurn?.let { a -> " [after turn: ${a.description}]" } ?: ""}")
@@ -111,4 +150,18 @@ class Agent(
             ToolOutcome("Error: ${e.message ?: e::class.simpleName}")
         }
     }
+
+    companion object {
+        /** The argument in which the model writes what to say if a [Tool.confirms] tool works. */
+        const val CONFIRMATION_ARG = "confirmation"
+
+        private val CONFIRMATION_SCHEMA = stringProperty(
+            "What to tell the user if this works: one short present-tense sentence, e.g. \"Starting navigation to " +
+                "the airport.\" Said only if it goes through, and then your turn ends. Leave it empty if you will " +
+                "make more calls after seeing this one's result (e.g. the next step of the request). When calling " +
+                "several tools at once, write one sentence covering all of them on the first call and leave this " +
+                "empty on the others.",
+        )
+    }
+
 }

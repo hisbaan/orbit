@@ -46,6 +46,8 @@ class MediaControlTool(
     private val sessions: MediaSessions,
     private val musicPackage: () -> String?,
 ) : Tool {
+    override val confirms = true
+
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(AudioManager::class.java)
 
@@ -91,7 +93,7 @@ class MediaControlTool(
         if (controller == null) {
             val code = keys[action] ?: return ToolOutcome(if (sessions.hasAccess) "Nothing is playing." else NO_ACCESS)
             sendKey(code)
-            return ToolOutcome(keyResult(action))
+            return ToolOutcome(keyResult(action), done = true)
         }
         val app = sessions.describeWhere(controller)
         val controls = controller.transportControls
@@ -113,7 +115,10 @@ class MediaControlTool(
             else -> return ToolOutcome("Error: unknown action '$action'")
         }
         sessions.log("$action -> ${controller.packageName}")
-        return ToolOutcome(if (action == "play" && !controller.isRemote) keyResult(action) else "Sent '$action' to $app.")
+        return ToolOutcome(
+            if (action == "play" && !controller.isRemote) keyResult(action) else "Sent '$action' to $app.",
+            done = true,
+        )
     }
 
     /** A cast session's own volume when [controller] is casting, otherwise the phone's media volume. */
@@ -130,7 +135,10 @@ class MediaControlTool(
                 else -> controller.setVolumeTo((info.maxVolume * percent!! / 100.0).roundToInt(), 0)
             }
             sessions.log("$action -> remote ${controller.packageName}")
-            return ToolOutcome("Changed the volume on ${sessions.describeWhere(controller)} (was ${info.currentVolume} of ${info.maxVolume}).")
+            return ToolOutcome(
+                "Changed the volume on ${sessions.describeWhere(controller)} (was ${info.currentVolume} of ${info.maxVolume}).",
+                done = true,
+            )
         }
         val stream = AudioManager.STREAM_MUSIC
         val max = audioManager.getStreamMaxVolume(stream)
@@ -141,7 +149,7 @@ class MediaControlTool(
             else -> audioManager.setStreamVolume(stream, (max * percent!! / 100.0).roundToInt(), 0)
         }
         val now = audioManager.getStreamVolume(stream)
-        return ToolOutcome("Phone media volume is now ${now * 100 / max}%.")
+        return ToolOutcome("Phone media volume is now ${now * 100 / max}%.", done = true)
     }
 
     private fun sendKey(code: Int) {
@@ -221,6 +229,8 @@ class PlayMusicTool(
     /** Package of the preferred music app, or null for the system's choice. */
     private val musicPackage: () -> String?,
 ) : Tool {
+    override val confirms = true
+
     private val focusTypes = mapOf(
         "song" to "vnd.android.cursor.item/audio",
         "artist" to MediaStore.Audio.Artists.ENTRY_CONTENT_TYPE,
@@ -268,6 +278,7 @@ class PlayMusicTool(
                     sessions.log("playFromSearch('$query') -> $app")
                     controller.transportControls.playFromSearch(query, extras)
                 },
+                done = true,
             )
         }
 
@@ -287,6 +298,7 @@ class PlayMusicTool(
                     context.startActivity(intent)
                 }
             },
+            done = true,
         )
     }
 
@@ -307,6 +319,7 @@ class PlayMusicTool(
         return ToolOutcome(
             "Found ${pick.describe()}. It will start playing after you finish speaking.",
             AfterTurnAction("play ${pick.describe()}", needsUnlock = true) { openInYouTubeMusic(context, pick.playUrl!!) },
+            done = true,
         )
     }
 }

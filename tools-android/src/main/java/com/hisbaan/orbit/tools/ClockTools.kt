@@ -18,6 +18,8 @@ import java.util.Locale
 
 /** Timers via the clock app, without showing its UI. Immediate. */
 class SetTimerTool(private val context: Context) : Tool {
+    override val confirms = true
+
     override val spec = ToolSpec(
         name = "set_timer",
         description = "Start a countdown timer.",
@@ -37,12 +39,14 @@ class SetTimerTool(private val context: Context) : Tool {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         args.string("label")?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
         context.startActivity(intent)
-        return ToolOutcome("Timer set for $seconds seconds.")
+        return ToolOutcome("Timer set for $seconds seconds.", done = true)
     }
 }
 
 /** Alarms via the clock app, without showing its UI. Immediate. */
 class SetAlarmTool(private val context: Context) : Tool {
+    override val confirms = true
+
     override val spec = ToolSpec(
         name = "set_alarm",
         description = "Set an alarm for a time of day (the next occurrence of that time).",
@@ -64,7 +68,7 @@ class SetAlarmTool(private val context: Context) : Tool {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         args.string("label")?.let { intent.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
         context.startActivity(intent)
-        return ToolOutcome("Alarm set for %02d:%02d.".format(hour, minute))
+        return ToolOutcome("Alarm set for %02d:%02d.".format(hour, minute), done = true)
     }
 }
 
