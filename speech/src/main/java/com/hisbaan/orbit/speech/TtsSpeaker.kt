@@ -1,0 +1,84 @@
+package com.hisbaan.orbit.speech
+
+import android.content.Context
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import com.hisbaan.orbit.audio.PlaybackUsage
+import com.hisbaan.orbit.audio.speechAttributes
+import com.hisbaan.orbit.diagnostics.EventLog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+class TtsSpeaker(context: Context) {
+    private val ready = CompletableDeferred<Boolean>()
+    private val tts = TextToSpeech(context.applicationContext) { status ->
+        val ok = status == TextToSpeech.SUCCESS
+        EventLog.log("tts", "TextToSpeech init ${if (ok) "ok" else "failed ($status)"}")
+        ready.complete(ok)
+    }
+
+    suspend fun speak(text: String, usage: PlaybackUsage): Boolean =
+        speakAll(Channel<String>(1).apply { trySend(text); close() }, usage)
+
+    /**
+     * Speaks [sentences] back to back as they arrive, so speech starts before the whole reply
+     * exists. Returns once the channel is closed and everything queued has been spoken; false
+     * if any utterance failed. Cancelling stops speech immediately.
+     */
+    suspend fun speakAll(sentences: ReceiveChannel<String>, usage: PlaybackUsage): Boolean {
+        if (!ready.await()) return false
+        tts.setAudioAttributes(usage.speechAttributes())
+        val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String) = Unit
+            override fun onDone(utteranceId: String) {
+                pending[utteranceId]?.complete(true)
+            }
+
+            override fun onStop(utteranceId: String, interrupted: Boolean) {
+                pending[utteranceId]?.complete(false)
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String) {
+                pending[utteranceId]?.complete(false)
+            }
+
+            override fun onError(utteranceId: String, errorCode: Int) {
+                EventLog.log("tts", "Utterance error $errorCode")
+                pending[utteranceId]?.complete(false)
+            }
+        })
+
+        val queued = mutableListOf<CompletableDeferred<Boolean>>()
+        try {
+            for (sentence in sentences) {
+                val id = UUID.randomUUID().toString()
+                val done = CompletableDeferred<Boolean>()
+                pending[id] = done
+                // The first utterance flushes anything left over from an earlier turn.
+                val mode = if (queued.isEmpty()) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+                if (tts.speak(sentence, mode, null, id) != TextToSpeech.SUCCESS) {
+                    EventLog.log("tts", "speak() rejected")
+                    pending.remove(id)
+                    continue
+                }
+                if (queued.isEmpty()) EventLog.log("tts", "Speaking (${usage.label})")
+                queued += done
+            }
+            var ok = queued.isNotEmpty()
+            for (done in queued) ok = (withTimeoutOrNull(30_000) { done.await() } ?: false) && ok
+            return ok
+        } catch (e: CancellationException) {
+            if (queued.isNotEmpty()) tts.stop()
+            throw e
+        }
+    }
+
+    fun shutdown() = tts.shutdown()
+}
