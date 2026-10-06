@@ -368,7 +368,14 @@ class Assistant(
                 speak("I couldn't reach the model.", usage, error = reason)
                 return@coroutineScope null
             }
-            afterTurn += result.afterTurn
+            val (now, later) = result.afterTurn.partition { it.duringReply }
+            afterTurn += later
+            if (now.isNotEmpty()) {
+                // Silent actions (opening an app, starting navigation) start with the reply.
+                step("Starting with the reply: ${now.joinToString { it.description }}")
+                _dismissRequests.tryEmit(Unit)
+                scope.launch { runAfterTurn(now) }
+            }
             step("Reply: ${result.reply}")
             chunker.flush()?.let(::enqueue)
             if (shown.isBlank()) {

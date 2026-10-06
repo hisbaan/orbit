@@ -28,9 +28,9 @@ interface Tool {
 }
 
 /**
- * [result] goes back to the model. [afterTurn] is work that must wait until the voice turn
- * has ended (route released, focus abandoned): anything that starts its own audio, opens
- * another app or places a call. See PLAN.md, Phase 1 "Tool timing".
+ * [result] goes back to the model. [afterTurn] is work deferred past the tool call: anything
+ * that starts its own audio, opens another app or places a call. See PLAN.md, Phase 1 "Tool
+ * timing".
  *
  * [done]: the action went through and the model has nothing to learn from [result], so the
  * confirmation it wrote into the call can be the whole reply (see [Tool.confirms]).
@@ -45,6 +45,11 @@ class AfterTurnAction(
     val description: String,
     /** Opens another app's UI, so the device must be unlocked first. */
     val needsUnlock: Boolean,
+    /**
+     * Makes no sound of its own (opening an app, starting navigation), so it starts as soon
+     * as the reply does instead of waiting for the turn to end and the headset to be released.
+     */
+    val duringReply: Boolean = false,
     val run: suspend () -> Unit,
 )
 

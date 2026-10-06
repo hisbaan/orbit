@@ -133,7 +133,7 @@ class OpenAppTool(private val context: Context) : Tool {
 
     override val spec = ToolSpec(
         name = "open_app",
-        description = "Open an installed app by name. Opens after you finish speaking.",
+        description = "Open an installed app by name. Opens as you reply.",
         parameters = objectSchema(listOf("name"), "name" to stringProperty("App name, e.g. 'Spotify'")),
     )
 
@@ -152,9 +152,9 @@ class OpenAppTool(private val context: Context) : Tool {
         val launch = pm.getLaunchIntentForPackage(match.second)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ?: return ToolOutcome("Error: ${match.first} can't be launched.")
         return ToolOutcome(
-            result = "Queued: ${match.first} will open after you finish speaking.",
+            result = "Queued: ${match.first} opens as you reply.",
             done = true,
-            afterTurn = AfterTurnAction("open ${match.first}", needsUnlock = true) { context.startActivity(launch) },
+            afterTurn = AfterTurnAction("open ${match.first}", needsUnlock = true, duringReply = true) { context.startActivity(launch) },
         )
     }
 }

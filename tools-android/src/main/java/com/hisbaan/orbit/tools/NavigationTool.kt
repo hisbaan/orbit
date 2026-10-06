@@ -27,7 +27,7 @@ class NavigationTool(private val context: Context) : Tool {
 
     override val spec = ToolSpec(
         name = "navigate",
-        description = "Start turn-by-turn navigation to a destination. Starts after you finish speaking.",
+        description = "Start turn-by-turn navigation to a destination. Starts as you reply.",
         parameters = objectSchema(
             listOf("destination"),
             "destination" to stringProperty("Address, place name or search like 'nearest gas station'"),
@@ -44,9 +44,9 @@ class NavigationTool(private val context: Context) : Tool {
         val generic = Intent(Intent.ACTION_VIEW, "geo:0,0?q=${Uri.encode(destination)}".toUri())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return ToolOutcome(
-            result = "Queued: navigation to '$destination' will start after you finish speaking.",
+            result = "Queued: navigation to '$destination' starts as you reply.",
             done = true,
-            afterTurn = AfterTurnAction("navigate to '$destination'", needsUnlock = true) {
+            afterTurn = AfterTurnAction("navigate to '$destination'", needsUnlock = true, duringReply = true) {
                 try {
                     context.startActivity(maps)
                 } catch (_: ActivityNotFoundException) {
