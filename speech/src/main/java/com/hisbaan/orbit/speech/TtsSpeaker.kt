@@ -1,8 +1,11 @@
 package com.hisbaan.orbit.speech
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import com.hisbaan.orbit.audio.PlaybackUsage
 import com.hisbaan.orbit.audio.speechAttributes
 import com.hisbaan.orbit.diagnostics.EventLog
@@ -15,12 +18,20 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 class TtsSpeaker(context: Context) {
+    private val appContext = context.applicationContext
     private val ready = CompletableDeferred<Boolean>()
     private val tts = TextToSpeech(context.applicationContext) { status ->
         val ok = status == TextToSpeech.SUCCESS
         EventLog.log("tts", "TextToSpeech init ${if (ok) "ok" else "failed ($status)"}")
         ready.complete(ok)
     }
+
+    /** The voice to speak with, by [Voice.getName]; null or not installed uses the engine's default. */
+    @Volatile
+    var voiceName: String? = null
+
+    /** The engine's voices (installed or not), once it's ready. */
+    suspend fun voices(): List<Voice> = if (ready.await()) tts.voices.orEmpty().toList() else emptyList()
 
     suspend fun speak(text: String, usage: PlaybackUsage): Boolean =
         speakAll(Channel<String>(1).apply { trySend(text); close() }, usage)
@@ -33,6 +44,7 @@ class TtsSpeaker(context: Context) {
     suspend fun speakAll(sentences: ReceiveChannel<String>, usage: PlaybackUsage): Boolean {
         if (!ready.await()) return false
         tts.setAudioAttributes(usage.speechAttributes())
+        applyVoice()
         val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String) = Unit
@@ -80,5 +92,33 @@ class TtsSpeaker(context: Context) {
         }
     }
 
+    /**
+     * Switches to [voiceName]. An online voice without a validated network falls back to its
+     * offline twin (`-network` → `-local`), else the default, rather than stalling on a timeout.
+     */
+    private fun applyVoice() {
+        val voices = tts.voices.orEmpty()
+        var voice = voiceName?.let { name -> voices.firstOrNull { it.name == name && it.isInstalled } }
+        if (voice != null && voice.isNetworkConnectionRequired && !online()) {
+            val name = voice.name
+            voice = voices.firstOrNull { it.name == name.removeSuffix("-network") + "-local" && it.isInstalled }
+            EventLog.log("tts", "Offline: $name -> ${voice?.name ?: "default voice"}")
+        }
+        val target = voice ?: tts.defaultVoice ?: return
+        if (tts.voice?.name != target.name) {
+            tts.voice = target
+            EventLog.log("tts", "Voice: ${target.name}")
+        }
+    }
+
+    private fun online(): Boolean {
+        val cm = appContext.getSystemService(ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
     fun shutdown() = tts.shutdown()
 }
+
+/** False for voices the engine lists but hasn't downloaded. */
+val Voice.isInstalled: Boolean get() = TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED !in features

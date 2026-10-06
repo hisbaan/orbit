@@ -36,6 +36,8 @@ data class AppSettings(
     val headsetSounds: Map<String, EarconStyle> = emptyMap(),
     /** Listening sounds on the phone and on headsets without their own choice. */
     val defaultSounds: EarconStyle = EarconStyle.GENTLE,
+    /** TTS voice name (e.g. `en-us-x-tpd-local`); null uses the engine's default. */
+    val ttsVoice: String? = null,
 ) {
     val isProviderConfigured: Boolean get() = baseUrl.isNotBlank() && model.isNotBlank()
 
@@ -63,6 +65,7 @@ class SettingsRepository(context: Context) {
         /** "address=STYLE" entries. */
         val headsetSounds = stringSetPreferencesKey("headset_sounds")
         val defaultSounds = stringPreferencesKey("default_sounds")
+        val ttsVoice = stringPreferencesKey("tts_voice")
 
         /** Before silent existed: the addresses that were alerting. Read once, then replaced by [headsetSounds]. */
         val legacyAlertingDevices = stringSetPreferencesKey("alerting_sound_devices")
@@ -85,6 +88,7 @@ class SettingsRepository(context: Context) {
             prefs[Keys.homeAssistantUrl] = new.homeAssistantUrl.trim()
             prefs[Keys.headsetSounds] = new.headsetSounds.map { (address, style) -> "$address=${style.name}" }.toSet()
             prefs[Keys.defaultSounds] = new.defaultSounds.name
+            if (new.ttsVoice != null) prefs[Keys.ttsVoice] = new.ttsVoice else prefs.remove(Keys.ttsVoice)
             prefs.remove(Keys.legacyAlertingDevices)
             if (new.homeAssistant != old.homeAssistant) {
                 val encoded = encodeCredential(new.homeAssistant)
@@ -109,6 +113,7 @@ class SettingsRepository(context: Context) {
         headsetSounds = prefs[Keys.headsetSounds]?.let(::decodeHeadsetSounds)
             ?: prefs[Keys.legacyAlertingDevices].orEmpty().associateWith { EarconStyle.ALERTING },
         defaultSounds = prefs[Keys.defaultSounds]?.let { name -> EarconStyle.entries.firstOrNull { it.name == name } } ?: EarconStyle.GENTLE,
+        ttsVoice = prefs[Keys.ttsVoice],
     )
 
     private fun decodeHeadsetSounds(entries: Set<String>): Map<String, EarconStyle> = entries.mapNotNull { entry ->

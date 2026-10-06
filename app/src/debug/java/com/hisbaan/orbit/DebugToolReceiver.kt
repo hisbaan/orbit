@@ -33,6 +33,20 @@ class DebugToolReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext as OrbitApp
         val name = intent.getStringExtra("tool") ?: return
+        if (name == "voices") {
+            // Lists the TTS engine's English voices: name, quality, latency, network, installed.
+            lateinit var tts: android.speech.tts.TextToSpeech
+            tts = android.speech.tts.TextToSpeech(app) {
+                val voices = tts.voices.orEmpty().filter { it.locale.language == "en" }.sortedBy { it.name }
+                EventLog.log("debug", "Default: ${tts.defaultVoice?.name}; ${voices.size} English voices")
+                voices.forEach { v ->
+                    val installed = android.speech.tts.TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED !in v.features
+                    EventLog.log("debug", "${v.name} ${v.locale} q=${v.quality} lat=${v.latency} net=${v.isNetworkConnectionRequired} installed=$installed")
+                }
+                tts.shutdown()
+            }
+            return
+        }
         if (name == "say") {
             app.assistant.trigger("debug", null, text = intent.getStringExtra("text").orEmpty())
             return

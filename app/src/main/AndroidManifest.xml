@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- Android 17+: needed to reach LAN addresses (Home Assistant, local model servers). -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <!-- Online TTS voices fall back to offline ones when there's no network. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-feature
         android:name="android.hardware.bluetooth"

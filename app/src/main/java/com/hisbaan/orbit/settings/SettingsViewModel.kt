@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.MediaStore
+import android.speech.tts.Voice
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -23,17 +24,23 @@ import com.hisbaan.orbit.homeassistant.HaException
 import com.hisbaan.orbit.homeassistant.HomeAssistant
 import com.hisbaan.orbit.providers.ApiKeyCredential
 import com.hisbaan.orbit.providers.OpenAiChatCompletions
+import com.hisbaan.orbit.speech.isInstalled
 import com.hisbaan.orbit.tools.SavedPlaylist
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.Locale
 import java.util.UUID
 
 data class MusicApp(val label: String, val packageName: String)
+
+/** An installed TTS voice in the user's language. */
+data class VoiceOption(val name: String, val label: String)
 
 /** A paired Bluetooth headset (anything in the audio device class). */
 data class Headset(val name: String, val address: String)
@@ -50,6 +57,7 @@ data class SettingsUiState(
     val haStatus: String? = null,
     /** Paired headsets; null without the nearby devices permission. */
     val headsets: List<Headset>? = null,
+    val voices: List<VoiceOption> = emptyList(),
 )
 
 data class HaSignIn(val baseUrl: String, val authorizeUrl: String, val state: String)
@@ -57,6 +65,8 @@ data class HaSignIn(val baseUrl: String, val authorizeUrl: String, val state: St
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = (app as OrbitApp).settings
     private val httpClient = (app as OrbitApp).httpClient
+    private val tts = (app as OrbitApp).tts
+    private var preview: Job? = null
 
     private val _state = MutableStateFlow(SettingsUiState(musicApps = findMusicApps()))
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()
@@ -64,6 +74,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch { _state.update { it.copy(draft = repo.current()) } }
         loadHeadsets()
+        loadVoices()
     }
 
     /** Edits that wait for an explicit save (text fields). */
@@ -200,6 +211,47 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     // endregion
 
+    // region Voice
+
+    fun loadVoices() {
+        viewModelScope.launch {
+            val language = Locale.getDefault().language
+            val voices = tts.voices()
+                .filter { it.locale.language == language && it.isInstalled }
+                .map { VoiceOption(it.name, voiceLabel(it)) }
+                .sortedBy { it.label }
+            _state.update { it.copy(voices = voices) }
+        }
+    }
+
+    /** Picks [name] (null: the engine's default) and plays a sample of it. */
+    fun selectVoice(name: String?) {
+        editAndSave { it.copy(ttsVoice = name) }
+        previewVoice(name)
+    }
+
+    fun previewVoice(name: String?) {
+        preview?.cancel()
+        preview = viewModelScope.launch {
+            tts.voiceName = name
+            tts.speak(VOICE_SAMPLE, PlaybackUsage.ASSISTANT)
+        }
+    }
+
+    /** Android's text-to-speech settings, where more voices can be downloaded. */
+    fun openTtsSettings() {
+        getApplication<Application>().startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /** "United States · IOB", "(online)" for network voices; names look like `en-us-x-iob-network`. */
+    private fun voiceLabel(voice: Voice): String {
+        val region = voice.locale.displayCountry.ifBlank { voice.locale.displayLanguage }
+        val code = voice.name.substringAfter("-x-", "").substringBeforeLast('-').uppercase().ifEmpty { "Standard" }
+        return "$region · $code" + if (voice.isNetworkConnectionRequired) " (online)" else ""
+    }
+
+    // endregion
+
     // region Listening sounds
 
     fun loadHeadsets() {
@@ -231,6 +283,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // endregion
+
+    private companion object {
+        const val VOICE_SAMPLE = "Hi, I'm Orbit. The living room lights are off, and it's 14 degrees and partly cloudy."
+    }
 
     private fun findMusicApps(): List<MusicApp> {
         val pm = getApplication<Application>().packageManager

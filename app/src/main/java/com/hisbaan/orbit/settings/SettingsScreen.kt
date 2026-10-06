@@ -191,6 +191,10 @@ fun SettingsScreen(
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
 
+        Section("Voice") {
+            VoiceSettings(draft, state.voices, vm)
+        }
+
         Section("Listening sounds") {
             ListeningSounds(draft, state.headsets, vm)
         }
@@ -218,6 +222,42 @@ private fun Section(title: String, content: @Composable () -> Unit) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             content()
         }
+    }
+}
+
+@Composable
+private fun VoiceSettings(draft: AppSettings, voices: List<VoiceOption>, vm: SettingsViewModel) {
+    Text(
+        "The voice Orbit speaks with; picking one plays a sample. Online voices need internet: without it, " +
+            "Orbit uses the same voice's offline version.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    var open by remember { mutableStateOf(false) }
+    val current = voices.firstOrNull { it.name == draft.ttsVoice }?.label ?: draft.ttsVoice ?: "Engine default"
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Voice", modifier = Modifier.weight(1f))
+        Box {
+            TextButton(onClick = {
+                vm.loadVoices() // picks up voices downloaded via "Get more voices"
+                open = true
+            }) { Text(current) }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                DropdownMenuItem(text = { Text("Engine default") }, onClick = {
+                    open = false
+                    vm.selectVoice(null)
+                })
+                voices.forEach { voice ->
+                    DropdownMenuItem(text = { Text(voice.label) }, onClick = {
+                        open = false
+                        vm.selectVoice(voice.name)
+                    })
+                }
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { vm.previewVoice(draft.ttsVoice) }) { Text("Play sample") }
+        TextButton(onClick = vm::openTtsSettings) { Text("Get more voices") }
     }
 }
 

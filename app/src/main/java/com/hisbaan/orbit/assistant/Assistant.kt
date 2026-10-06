@@ -77,6 +77,7 @@ class Assistant(
     private val settings: SettingsRepository,
     private val httpClient: HttpClient,
     tools: List<Tool>,
+    private val tts: TtsSpeaker,
 ) {
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(AudioManager::class.java)
@@ -85,7 +86,6 @@ class Assistant(
     private val router = AudioRouter(audioManager, headsetProfile)
     private val focus = AudioFocus(audioManager)
     private val stt = OnDeviceStt(appContext)
-    private val tts = TtsSpeaker(appContext)
     private val agent = Agent(tools, systemPrompt = { SystemPrompt.build() })
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -172,6 +172,7 @@ class Assistant(
         _state.value = AssistantState(phase = Phase.STARTING)
 
         val config = settings.current()
+        tts.voiceName = config.ttsVoice
         focus.acquire(FocusMode.TRANSIENT_EXCLUSIVE)
         val route = router.acquire(RouteStrategy.AUTO, setCommunicationMode = false, preferredDevice = device)
         val usage = if (route.isBluetooth) PlaybackUsage.VOICE_COMMUNICATION else PlaybackUsage.ASSISTANT
