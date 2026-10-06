@@ -5,7 +5,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.hisbaan.orbit.audio.EarconStyle
 import com.hisbaan.orbit.homeassistant.HaCredential
 import com.hisbaan.orbit.tools.SavedPlaylist
 import kotlinx.coroutines.flow.Flow
@@ -30,6 +32,10 @@ data class AppSettings(
     val homeAssistantUrl: String = "",
     /** Null until the user signs in or adds a token. Stored encrypted. */
     val homeAssistant: HaCredential? = null,
+    /** Listening sounds per headset, by Bluetooth address (e.g. alerting for a helmet). */
+    val headsetSounds: Map<String, EarconStyle> = emptyMap(),
+    /** Listening sounds on the phone and on headsets without their own choice. */
+    val defaultSounds: EarconStyle = EarconStyle.GENTLE,
 ) {
     val isProviderConfigured: Boolean get() = baseUrl.isNotBlank() && model.isNotBlank()
 
@@ -54,6 +60,12 @@ class SettingsRepository(context: Context) {
         val savedPlaylists = stringPreferencesKey("saved_playlists")
         val homeAssistantUrl = stringPreferencesKey("home_assistant_url")
         val homeAssistantEncrypted = stringPreferencesKey("home_assistant_credential_encrypted")
+        /** "address=STYLE" entries. */
+        val headsetSounds = stringSetPreferencesKey("headset_sounds")
+        val defaultSounds = stringPreferencesKey("default_sounds")
+
+        /** Before silent existed: the addresses that were alerting. Read once, then replaced by [headsetSounds]. */
+        val legacyAlertingDevices = stringSetPreferencesKey("alerting_sound_devices")
     }
 
     val settings: Flow<AppSettings> = store.data.map(::fromPrefs)
@@ -71,6 +83,9 @@ class SettingsRepository(context: Context) {
             if (new.reasoningEffort != null) prefs[Keys.reasoningEffort] = new.reasoningEffort else prefs.remove(Keys.reasoningEffort)
             if (new.musicPackage != null) prefs[Keys.musicPackage] = new.musicPackage else prefs.remove(Keys.musicPackage)
             prefs[Keys.homeAssistantUrl] = new.homeAssistantUrl.trim()
+            prefs[Keys.headsetSounds] = new.headsetSounds.map { (address, style) -> "$address=${style.name}" }.toSet()
+            prefs[Keys.defaultSounds] = new.defaultSounds.name
+            prefs.remove(Keys.legacyAlertingDevices)
             if (new.homeAssistant != old.homeAssistant) {
                 val encoded = encodeCredential(new.homeAssistant)
                 if (encoded == null) prefs.remove(Keys.homeAssistantEncrypted) else prefs[Keys.homeAssistantEncrypted] = SecretStore.encrypt(encoded)
@@ -91,7 +106,15 @@ class SettingsRepository(context: Context) {
         savedPlaylists = prefs[Keys.savedPlaylists]?.let(::decodePlaylists).orEmpty(),
         homeAssistantUrl = prefs[Keys.homeAssistantUrl].orEmpty(),
         homeAssistant = prefs[Keys.homeAssistantEncrypted]?.let(SecretStore::decrypt)?.let(::decodeCredential),
+        headsetSounds = prefs[Keys.headsetSounds]?.let(::decodeHeadsetSounds)
+            ?: prefs[Keys.legacyAlertingDevices].orEmpty().associateWith { EarconStyle.ALERTING },
+        defaultSounds = prefs[Keys.defaultSounds]?.let { name -> EarconStyle.entries.firstOrNull { it.name == name } } ?: EarconStyle.GENTLE,
     )
+
+    private fun decodeHeadsetSounds(entries: Set<String>): Map<String, EarconStyle> = entries.mapNotNull { entry ->
+        val (address, name) = entry.split('=', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+        EarconStyle.entries.firstOrNull { it.name == name }?.let { address to it }
+    }.toMap()
 
     private fun encodeCredential(credential: HaCredential?): String? = when (credential) {
         is HaCredential.OAuth -> "oauth\n${credential.refreshToken}"

@@ -2,6 +2,8 @@ package com.hisbaan.orbit.settings
 
 import android.Manifest
 import android.app.Application
+import android.bluetooth.BluetoothClass
+import android.bluetooth.BluetoothManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -10,6 +12,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hisbaan.orbit.OrbitApp
+import com.hisbaan.orbit.audio.EarconStyle
+import com.hisbaan.orbit.audio.Earcons
+import com.hisbaan.orbit.audio.MicCapture
+import com.hisbaan.orbit.audio.PcmPlayer
+import com.hisbaan.orbit.audio.PlaybackUsage
 import com.hisbaan.orbit.homeassistant.HaAuth
 import com.hisbaan.orbit.homeassistant.HaCredential
 import com.hisbaan.orbit.homeassistant.HaException
@@ -18,6 +25,7 @@ import com.hisbaan.orbit.providers.ApiKeyCredential
 import com.hisbaan.orbit.providers.OpenAiChatCompletions
 import com.hisbaan.orbit.tools.SavedPlaylist
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,6 +34,9 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 data class MusicApp(val label: String, val packageName: String)
+
+/** A paired Bluetooth headset (anything in the audio device class). */
+data class Headset(val name: String, val address: String)
 
 data class SettingsUiState(
     /** Null until loaded from disk. */
@@ -37,6 +48,8 @@ data class SettingsUiState(
     /** Set while the Home Assistant sign-in page is open. */
     val haSignIn: HaSignIn? = null,
     val haStatus: String? = null,
+    /** Paired headsets; null without the nearby devices permission. */
+    val headsets: List<Headset>? = null,
 )
 
 data class HaSignIn(val baseUrl: String, val authorizeUrl: String, val state: String)
@@ -50,6 +63,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { _state.update { it.copy(draft = repo.current()) } }
+        loadHeadsets()
     }
 
     /** Edits that wait for an explicit save (text fields). */
@@ -182,6 +196,38 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val trimmed = url.trim()
         if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return null
         return runCatching { HaAuth.origin(trimmed) }.getOrNull()?.takeIf { it.substringAfter("://").isNotBlank() }
+    }
+
+    // endregion
+
+    // region Listening sounds
+
+    fun loadHeadsets() {
+        val app = getApplication<Application>()
+        if (ContextCompat.checkSelfPermission(app, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            return _state.update { it.copy(headsets = null) }
+        }
+        val bonded = app.getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices.orEmpty()
+        val headsets = bonded
+            .filter { it.bluetoothClass?.majorDeviceClass == BluetoothClass.Device.Major.AUDIO_VIDEO }
+            .map { Headset(it.alias ?: it.name ?: it.address, it.address) }
+            .sortedBy { it.name.lowercase() }
+        _state.update { it.copy(headsets = headsets) }
+    }
+
+    fun setHeadsetSounds(headset: Headset, style: EarconStyle) = editAndSave { s ->
+        s.copy(headsetSounds = s.headsetSounds + (headset.address to style))
+    }
+
+    fun setDefaultSounds(style: EarconStyle) = editAndSave { it.copy(defaultSounds = style) }
+
+    /** Plays the start and end sounds of [style] on the current media output. */
+    fun previewSounds(style: EarconStyle) {
+        viewModelScope.launch {
+            PcmPlayer.play(Earcons.listening(style, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, PlaybackUsage.ASSISTANT)
+            delay(600)
+            PcmPlayer.play(Earcons.done(style, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, PlaybackUsage.ASSISTANT)
+        }
     }
 
     // endregion

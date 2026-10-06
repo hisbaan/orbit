@@ -15,6 +15,8 @@ import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.audio.AudioFocus
 import com.hisbaan.orbit.audio.AudioRouter
 import com.hisbaan.orbit.audio.CaptureSource
+import com.hisbaan.orbit.audio.EarconStyle
+import com.hisbaan.orbit.audio.Earcons
 import com.hisbaan.orbit.audio.FocusMode
 import com.hisbaan.orbit.audio.HeadsetProfile
 import com.hisbaan.orbit.audio.MicCapture
@@ -174,6 +176,8 @@ class Assistant(
         val route = router.acquire(RouteStrategy.AUTO, setCommunicationMode = false, preferredDevice = device)
         val usage = if (route.isBluetooth) PlaybackUsage.VOICE_COMMUNICATION else PlaybackUsage.ASSISTANT
         step("Route: ${route.summary()}")
+        val sounds = earconStyle(config, route.hfpDevice ?: device)
+        step("Listening sounds: ${sounds.label}")
 
         // One capture stream for the whole turn keeps the SCO link up. Chunks go to the
         // recognizer only while it's listening.
@@ -189,7 +193,7 @@ class Assistant(
         val afterTurn = mutableListOf<AfterTurnAction>()
         try {
             router.awaitHfpAudio(route, timeoutMs = 1_500)?.let { step("HFP link up after ${it}ms") }
-            converse(config, usage, listener, typed, afterTurn, step)
+            converse(config, usage, sounds, listener, typed, afterTurn, step)
         } finally {
             withContext(NonCancellable) {
                 interruptible = false
@@ -240,6 +244,7 @@ class Assistant(
     private suspend fun converse(
         config: AppSettings,
         usage: PlaybackUsage,
+        sounds: EarconStyle,
         listener: AtomicReference<Channel<ShortArray>?>,
         typed: String?,
         afterTurn: MutableList<AfterTurnAction>,
@@ -258,7 +263,7 @@ class Assistant(
             val text = if (exchange == 0 && typed != null) {
                 typed
             } else {
-                PcmPlayer.play(PcmPlayer.beep(MicCapture.SAMPLE_RATE, 880.0), MicCapture.SAMPLE_RATE, usage)
+                PcmPlayer.play(Earcons.listening(sounds, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, usage)
                 _state.value = AssistantState(phase = Phase.LISTENING)
                 step(if (followUp) "Listening for a follow-up" else "Listening")
                 val audio = Channel<ShortArray>(capacity = 500)
@@ -272,7 +277,7 @@ class Assistant(
                     audio.close()
                 }
                 step("Heard: $heard")
-                PcmPlayer.play(PcmPlayer.beep(MicCapture.SAMPLE_RATE, 660.0, durationMs = 120), MicCapture.SAMPLE_RATE, usage)
+                PcmPlayer.play(Earcons.done(sounds, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, usage)
                 when (heard) {
                     is OnDeviceStt.Result.Text -> heard.text
                     // Silence after a question just ends the turn.
@@ -369,6 +374,12 @@ class Assistant(
             interruptible = false
             watcher.cancel()
         }
+    }
+
+    /** The headset's own choice of listening sounds (e.g. alerting for a helmet intercom), else the default. */
+    private fun earconStyle(config: AppSettings, headset: BluetoothDevice?): EarconStyle {
+        val address = headset?.let { runCatching { it.address }.getOrNull() }
+        return address?.let { config.headsetSounds[it] } ?: config.defaultSounds
     }
 
     /** Logs when the headset drops the HFP audio link mid-turn, e.g. its button ending voice recognition. */

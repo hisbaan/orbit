@@ -17,6 +17,9 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.hisbaan.orbit.audio.EarconStyle
 import com.hisbaan.orbit.homeassistant.HaCredential
 
 @Composable
@@ -187,6 +191,10 @@ fun SettingsScreen(
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
 
+        Section("Listening sounds") {
+            ListeningSounds(draft, state.headsets, vm)
+        }
+
         Section("Home Assistant") {
             HomeAssistantSettings(draft, state.haStatus, vm)
         }
@@ -209,6 +217,43 @@ private fun Section(title: String, content: @Composable () -> Unit) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             content()
+        }
+    }
+}
+
+@Composable
+private fun ListeningSounds(draft: AppSettings, headsets: List<Headset>?, vm: SettingsViewModel) {
+    Text(
+        "The sound Orbit plays when it starts and stops listening. Alerting carries over wind noise in a " +
+            "helmet; silent plays nothing.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(EarconStyle.GENTLE, EarconStyle.ALERTING).forEach { style ->
+            OutlinedButton(onClick = { vm.previewSounds(style) }) { Text("Play ${style.label.lowercase()}") }
+        }
+    }
+    SoundChoice("Default", draft.defaultSounds, vm::setDefaultSounds)
+    when {
+        headsets == null -> Text("Grant the nearby devices permission to set sounds per headset.", style = MaterialTheme.typography.bodySmall)
+        else -> headsets.forEach { headset ->
+            SoundChoice(headset.name, draft.headsetSounds[headset.address] ?: draft.defaultSounds) { vm.setHeadsetSounds(headset, it) }
+        }
+    }
+}
+
+@Composable
+private fun SoundChoice(name: String, selected: EarconStyle, onSelect: (EarconStyle) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(name)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            EarconStyle.entries.forEachIndexed { i, style ->
+                SegmentedButton(
+                    selected = style == selected,
+                    onClick = { onSelect(style) },
+                    shape = SegmentedButtonDefaults.itemShape(i, EarconStyle.entries.size),
+                ) { Text(style.label) }
+            }
         }
     }
 }
