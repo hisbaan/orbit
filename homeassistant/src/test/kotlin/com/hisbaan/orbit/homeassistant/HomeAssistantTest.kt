@@ -234,12 +234,13 @@ class HomeAssistantTest {
     fun `sensitive actions need confirmation`() = runTest {
         val calls = mutableListOf<Pair<String, JsonObject>>()
         val tools = tools(haServer(calls))
-        val unlock = tools.callService.invoke(args("""{"entities":"lock.front_door","service":"unlock"}""")).result
-        val garage = tools.callService.invoke(args("""{"entities":"Garage door","service":"open_cover"}""")).result
-        assertTrue(unlock, unlock.startsWith("Not done yet"))
-        assertTrue(garage, garage.startsWith("Not done yet"))
+        val unlock = tools.callService.invoke(args("""{"entities":"lock.front_door","service":"unlock"}"""))
+        val garage = tools.callService.invoke(args("""{"entities":"Garage door","service":"open_cover"}"""))
+        assertTrue(unlock.result, unlock.result.startsWith("Not done yet"))
+        assertTrue(garage.result, garage.result.startsWith("Not done yet"))
+        // Confirming is the agent's job: the tool only holds the action back.
         assertTrue(calls.isEmpty())
-        tools.callService.invoke(args("""{"entities":"lock.front_door","service":"unlock","confirmed":true}"""))
+        unlock.pending!!.run()
         assertEquals("lock/unlock", calls.single().first)
     }
 

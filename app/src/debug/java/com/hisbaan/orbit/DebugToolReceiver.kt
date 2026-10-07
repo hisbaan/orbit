@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.MediaStore
+import com.hisbaan.orbit.agent.boolean
 import com.hisbaan.orbit.diagnostics.EventLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -22,6 +24,9 @@ import kotlinx.serialization.json.jsonObject
  *
  *   adb shell am broadcast -n com.hisbaan.orbit/.DebugToolReceiver \
  *       --es tool play_music --es args '{"query":"Eden"}'
+ *
+ * For a tool that holds an action for the user's yes (call_contact, delete_calendar_event,
+ * home_call_service), `"confirmed": true` in args runs it, standing in for confirm_action.
  *
  * `--es tool playFromSearch --es query X [--es focus <mime>]` sends a raw playFromSearch to the
  * preferred music app's session, for probing what a player accepts.
@@ -61,9 +66,16 @@ class DebugToolReceiver : BroadcastReceiver() {
                 } else {
                     val tool = app.tools.firstOrNull { it.spec.name == name }
                         ?: return@launch EventLog.log("debug", "No tool '$name'")
-                    val args = Json.parseToJsonElement(intent.getStringExtra("args") ?: "{}").jsonObject
-                    val outcome = tool.invoke(args)
+                    val parsed = Json.parseToJsonElement(intent.getStringExtra("args") ?: "{}").jsonObject
+                    val args = JsonObject(parsed - "confirmed")
+                    var outcome = tool.invoke(args)
                     EventLog.log("debug", "$name($args) -> ${outcome.result}")
+                    // "confirmed": true stands in for the user's yes to an action the tool held back.
+                    val pending = outcome.pending
+                    if (pending != null && parsed.boolean("confirmed") == true) {
+                        outcome = pending.run()
+                        EventLog.log("debug", "Confirmed ${pending.description} -> ${outcome.result}")
+                    }
                     outcome.afterTurn?.let {
                         it.run()
                         EventLog.log("debug", "Ran after-turn: ${it.description}")

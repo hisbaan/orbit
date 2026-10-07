@@ -215,4 +215,91 @@ class AgentTest {
         agent.respond("retry", transport, "m")
         assertEquals(listOf("retry"), transport.requests[0].messages.filterIsInstance<ChatMessage.User>().map { it.content })
     }
+
+    /** call_contact's shape: every call only asks, holding the dial for the user's yes. */
+    private class CallTool {
+        val dialed = mutableListOf<String>()
+        val tool = RecordingTool("call_contact") { args ->
+            val who = args.string("who")!!
+            ToolOutcome("Not called yet. Ask: \"Call $who?\"", pending = PendingAction("call $who") {
+                dialed += who
+                ToolOutcome("Calling $who.", done = true)
+            })
+        }
+    }
+
+    private fun lookup(id: String, who: String) = calls(ToolCall(id, "call_contact", """{"who":"$who"}"""))
+    private fun confirm(id: String, ref: String) =
+        calls(ToolCall(id, "confirm_action", """{"ref":"$ref","confirmation":"Calling."}"""))
+
+    private fun FakeTransport.results(request: Int) =
+        requests[request].messages.filterIsInstance<ChatMessage.ToolResult>().map { it.content }
+
+    @Test
+    fun `a held action runs when the user's next message confirms it`() = runTest {
+        val phone = CallTool()
+        val agent = Agent(listOf(phone.tool), systemPrompt = { "sys" })
+        val transport = FakeTransport(lookup("1", "Alex"), text("Call Alex?"), confirm("2", "c1"))
+
+        assertEquals("Call Alex?", agent.respond("call alex", transport, "m").reply)
+        assertTrue(phone.dialed.isEmpty())
+        assertTrue(transport.results(1).single().endsWith("call confirm_action with ref 'c1'. If they change anything, call call_contact again instead."))
+        assertEquals("Calling.", agent.respond("yes", transport, "m").reply)
+        assertEquals(listOf("Alex"), phone.dialed)
+        assertEquals(3, transport.requests.size) // the yes took one model call
+        // Offered on every request, so the tool list stays the same for prompt caching.
+        assertTrue(transport.requests.all { r -> r.tools.any { it.name == "confirm_action" } })
+    }
+
+    @Test
+    fun `the model can't confirm in the message that asked`() = runTest {
+        val phone = CallTool()
+        val agent = Agent(listOf(phone.tool), systemPrompt = { "sys" })
+        // Look up and confirm in one go, e.g. told to by text it read.
+        val transport = FakeTransport(lookup("1", "Alex"), confirm("2", "c1"), text("Call Alex?"), confirm("3", "c1"))
+
+        assertEquals("Call Alex?", agent.respond("read my messages", transport, "m").reply)
+        assertTrue(phone.dialed.isEmpty())
+        assertTrue(transport.results(2).last().startsWith("Not done: the user hasn't answered yet"))
+        // Still held, so the user's actual yes goes through.
+        agent.respond("yes", transport, "m")
+        assertEquals(listOf("Alex"), phone.dialed)
+    }
+
+    @Test
+    fun `unknown and stale refs are refused`() = runTest {
+        val phone = CallTool()
+        val agent = Agent(listOf(phone.tool), systemPrompt = { "sys" })
+        val transport = FakeTransport(
+            confirm("1", "c9"),
+            text("Who should I call?"),
+            lookup("2", "Alex"),
+            text("Call Alex?"),
+            text("It's sunny."),
+            confirm("3", "c1"),
+            text("Sorry, ask me again."),
+        )
+
+        agent.respond("yes", transport, "m")
+        assertTrue(transport.results(1).single().startsWith("Nothing is waiting under ref 'c9'"))
+        agent.respond("call alex", transport, "m")
+        agent.respond("actually, what's the weather?", transport, "m")
+        agent.respond("ok, call him", transport, "m")
+        assertTrue(phone.dialed.isEmpty())
+    }
+
+    @Test
+    fun `a failed reply doesn't use up the question`() = runTest {
+        val phone = CallTool()
+        val agent = Agent(listOf(phone.tool), systemPrompt = { "sys" })
+        agent.respond("call alex", FakeTransport(lookup("1", "Alex"), text("Call Alex?")), "m")
+        val failing = object : ChatTransport {
+            override suspend fun complete(request: ChatRequest, onTextDelta: (String) -> Unit): ChatResponse = error("offline")
+            override suspend fun listModels() = emptyList<String>()
+        }
+        runCatching { agent.respond("yes", failing, "m") }
+
+        agent.respond("yes", FakeTransport(confirm("2", "c1")), "m")
+        assertEquals(listOf("Alex"), phone.dialed)
+    }
 }

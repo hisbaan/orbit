@@ -9,6 +9,7 @@ import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
 import android.provider.CalendarContract.Instances
 import androidx.core.content.ContextCompat
+import com.hisbaan.orbit.agent.PendingAction
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
 import com.hisbaan.orbit.agent.boolean
@@ -309,18 +310,15 @@ class CreateCalendarEventTool(
     }
 }
 
-/** Deletes a single (non-recurring) event, after the user confirms. */
+/** Deletes a single (non-recurring) event, held until the user agrees (see [PendingAction]). */
 class DeleteCalendarEventTool(private val calendar: CalendarAccess, private val zone: () -> ZoneId = ZoneId::systemDefault) : Tool {
-    override val confirms = true
-
     override val spec = ToolSpec(
         name = "delete_calendar_event",
-        description = "Delete an event by id (from calendar_events or create_calendar_event). Needs the user's " +
-            "confirmation: call once without confirmed, ask, then call again with confirmed=true.",
+        description = "Delete an event by id (from calendar_events or create_calendar_event). Held until the user " +
+            "confirms: the result tells you what to ask.",
         parameters = objectSchema(
             listOf("id"),
             "id" to integerProperty("Event id"),
-            "confirmed" to booleanProperty("True only once the user has confirmed"),
         ),
     )
 
@@ -330,11 +328,16 @@ class DeleteCalendarEventTool(private val calendar: CalendarAccess, private val 
         val event = calendar.event(id) ?: return ToolOutcome("No event with id $id.")
         val what = "'${event.title}', ${CalendarFormat.describeTime(event.begin, event.end, event.allDay, zone())}"
         if (event.recurring) return ToolOutcome("$what is a recurring event; Orbit can't delete single occurrences, so it was left alone.")
-        if (args.boolean("confirmed") != true) {
-            return ToolOutcome("Not deleted yet: ask the user to confirm deleting $what, then call again with confirmed=true.")
-        }
-        if (!calendar.delete(id)) return ToolOutcome("Error: couldn't delete $what.")
-        EventLog.log("calendar", "Deleted event $id")
-        return ToolOutcome("Deleted $what.", done = true)
+        return ToolOutcome(
+            "Not deleted yet: ask the user to confirm deleting $what.",
+            pending = PendingAction("delete event $id") {
+                if (calendar.delete(id)) {
+                    EventLog.log("calendar", "Deleted event $id")
+                    ToolOutcome("Deleted $what.", done = true)
+                } else {
+                    ToolOutcome("Error: couldn't delete $what.")
+                }
+            },
+        )
     }
 }

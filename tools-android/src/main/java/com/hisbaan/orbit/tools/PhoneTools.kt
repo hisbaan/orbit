@@ -8,10 +8,9 @@ import android.net.Uri
 import android.provider.ContactsContract.CommonDataKinds.Phone
 import androidx.core.content.ContextCompat
 import com.hisbaan.orbit.agent.AfterTurnAction
+import com.hisbaan.orbit.agent.PendingAction
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
-import com.hisbaan.orbit.agent.boolean
-import com.hisbaan.orbit.agent.booleanProperty
 import com.hisbaan.orbit.agent.objectSchema
 import com.hisbaan.orbit.agent.requireString
 import com.hisbaan.orbit.agent.string
@@ -21,25 +20,22 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * Calls a contact or number. Only dials on a single unambiguous match; otherwise the model gets
- * the candidates and asks. The first call only resolves the number: the model reads it back
- * and calls again with `confirmed` once the user says yes, so a misheard name never dials.
- * After turn: the call needs the SCO link Orbit is holding.
+ * the candidates and asks. It never dials straight away: it resolves the number and holds the
+ * call until the user agrees (see [PendingAction]), so a misheard name never dials, and the
+ * number dialed is the one read back. After turn: the call needs the SCO link Orbit is holding.
  */
 class CallContactTool(private val context: Context) : Tool {
-    override val confirms = true
-
     private val numberTypes = mapOf("mobile" to Phone.TYPE_MOBILE, "home" to Phone.TYPE_HOME, "work" to Phone.TYPE_WORK)
 
     override val spec = ToolSpec(
         name = "call_contact",
-        description = "Phone a contact by name, or a phone number. First call it without confirmed: it looks up " +
-            "who would be called, and you ask the user to confirm. Call again with confirmed=true only after they agree. " +
+        description = "Phone a contact by name, or a phone number. It looks up who would be called and holds the " +
+            "call until the user confirms. " +
             "If several contacts match, you get their names back: ask the user which one. The call starts after you finish speaking.",
         parameters = objectSchema(
             listOf("who"),
             "who" to stringProperty("Contact name as the user said it, or a phone number"),
             "number_type" to stringProperty("Which of the contact's numbers, if the user said", numberTypes.keys.toList()),
-            "confirmed" to booleanProperty("True only once the user has confirmed this exact call"),
         ),
     )
 
@@ -47,10 +43,9 @@ class CallContactTool(private val context: Context) : Tool {
 
     override suspend fun invoke(args: JsonObject): ToolOutcome {
         val who = args.requireString("who")
-        val confirmed = args.boolean("confirmed") == true
         val digits = who.filter { it.isDigit() || it == '+' }
         if (digits.count { it.isDigit() } >= 3 && digits.length >= who.count { !it.isWhitespace() } - 2) {
-            return if (confirmed) dial(digits, digits) else askToConfirm("the number ${digits.toList().joinToString(" ")}")
+            return askToConfirm("the number ${digits.toList().joinToString(" ")}") { dial(digits, digits) }
         }
         if (!granted(Manifest.permission.READ_CONTACTS)) {
             return ToolOutcome("Error: Orbit doesn't have contacts permission. Tell the user to grant it in Orbit's settings.")
@@ -72,17 +67,14 @@ class CallContactTool(private val context: Context) : Tool {
             ?: chosen.firstOrNull { it.primary }
             ?: chosen.firstOrNull { it.type == Phone.TYPE_MOBILE }
             ?: chosen.first()
-        if (!confirmed) {
-            val type = numberTypes.entries.firstOrNull { it.value == number.type }?.key
-            val numbers = chosen.map { it.number }.distinct().size
-            return askToConfirm(number.name + if (type != null && numbers > 1) " on $type" else "")
-        }
-        return dial(number.number, number.name)
+        val type = numberTypes.entries.firstOrNull { it.value == number.type }?.key
+        val numbers = chosen.map { it.number }.distinct().size
+        return askToConfirm(number.name + if (type != null && numbers > 1) " on $type" else "") { dial(number.number, number.name) }
     }
 
-    private fun askToConfirm(target: String) = ToolOutcome(
-        "Not called yet. Ask the user to confirm in a short question, e.g. \"Call $target?\". " +
-            "If they agree, call call_contact again with the same arguments and confirmed=true.",
+    private fun askToConfirm(target: String, dial: () -> ToolOutcome) = ToolOutcome(
+        "Not called yet. Ask the user to confirm in a short question, e.g. \"Call $target?\"",
+        pending = PendingAction("call $target") { dial() },
     )
 
     private fun dial(number: String, label: String): ToolOutcome {

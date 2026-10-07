@@ -38,6 +38,9 @@ interface Tool {
  *
  * [images] (e.g. a screenshot) reach the model in a message after the tool results, since
  * tool results themselves are text only. [cards] are shown to the user on screen.
+ *
+ * [pending]: an action that needs the user's yes first (dialing, deleting, unlocking), held
+ * back instead of done; [result] then tells the model what to ask. Never [done].
  */
 data class ToolOutcome(
     val result: String,
@@ -45,7 +48,17 @@ data class ToolOutcome(
     val done: Boolean = false,
     val images: List<ChatImage> = emptyList(),
     val cards: List<Card> = emptyList(),
+    val pending: PendingAction? = null,
 )
+
+/**
+ * An action waiting for the user's yes, resolved to its exact target (the number, the event,
+ * the entities). The agent holds it under a ref and runs [run] only when the model calls
+ * [Agent.CONFIRM_TOOL] with that ref in the user's next message, so neither the model nor text
+ * it reads (notifications, the screen) can confirm on the user's behalf, and what runs is what
+ * was read back.
+ */
+class PendingAction(val description: String, val run: suspend () -> ToolOutcome)
 
 class AfterTurnAction(
     val description: String,

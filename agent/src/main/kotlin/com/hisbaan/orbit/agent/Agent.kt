@@ -32,9 +32,13 @@ data class AgentResult(
  *
  * History survives for [historyTtlMs] after a turn so a quick follow-up continues the
  * conversation; after that the next turn starts fresh.
+ *
+ * Actions that need the user's yes come back from tools as [PendingAction]s. They are held
+ * here under a short ref and run only through [CONFIRM_TOOL], with that ref, in the user's
+ * next message: neither the model nor text it reads can confirm on the user's behalf.
  */
 class Agent(
-    private val tools: List<Tool>,
+    tools: List<Tool>,
     private val systemPrompt: () -> String,
     private val clock: () -> Long = System::currentTimeMillis,
     private val historyTtlMs: Long = 2 * 60_000,
@@ -42,7 +46,44 @@ class Agent(
 ) {
     private val history = mutableListOf<ChatMessage>()
     private var lastTurnEndedAt = 0L
-    private val toolsByName = tools.associateBy { it.spec.name }
+
+    /** User messages so far in this conversation; a held action can be confirmed only in the next one. */
+    private var userMessages = 0
+    private var lastRef = 0
+    private val held = mutableMapOf<String, Held>()
+
+    private class Held(val userMessage: Int, val action: PendingAction)
+
+    /**
+     * Runs a held action once the user has agreed. Always offered, even with nothing held, so
+     * the tool list (part of the prompt providers cache) doesn't change from request to request.
+     */
+    private val confirmAction = object : Tool {
+        override val confirms = true
+
+        override val spec = ToolSpec(
+            name = CONFIRM_TOOL,
+            description = "Carry out an action a tool held back for the user's yes, once the user plainly agrees to " +
+                "the question you asked. If they change anything (\"yes, but his work number\"), call the original " +
+                "tool again instead, which asks anew. If they decline, don't call this.",
+            parameters = objectSchema(listOf("ref"), "ref" to stringProperty("The ref the tool's result gave, e.g. 'c1'")),
+        )
+
+        override suspend fun invoke(args: JsonObject): ToolOutcome {
+            val ref = args.requireString("ref")
+            val waiting = held[ref] ?: return ToolOutcome("Nothing is waiting under ref '$ref'. Call the original tool again.")
+            if (waiting.userMessage == userMessages) {
+                // Asked and "confirmed" in one message: the user hasn't answered yet.
+                return ToolOutcome("Not done: the user hasn't answered yet. Ask them, and confirm only once they agree.")
+            }
+            held -= ref
+            EventLog.log("agent", "Confirmed by the user: ${waiting.action.description}")
+            return waiting.action.run()
+        }
+    }
+
+    private val tools = tools + confirmAction
+    private val toolsByName = this.tools.associateBy { it.spec.name }
 
     suspend fun respond(
         userText: String,
@@ -56,7 +97,11 @@ class Agent(
         if (history.isNotEmpty() && clock() - lastTurnEndedAt > historyTtlMs) {
             EventLog.log("agent", "History expired; starting a new conversation")
             history.clear()
+            held.clear()
         }
+        userMessages++
+        // Only the previous message's questions can be answered by this one.
+        held.values.removeAll { it.userMessage < userMessages - 1 }
         val mark = history.size
         val afterTurn = mutableListOf<AfterTurnAction>()
         val calls = mutableListOf<ToolCall>()
@@ -113,15 +158,21 @@ class Agent(
             history += ChatMessage.Assistant(reply)
             return AgentResult(reply, afterTurn, calls)
         } catch (e: Throwable) {
-            // Leave history as it was before this turn so a retry starts clean.
+            // Leave history as it was before this turn so a retry starts clean. Its questions
+            // were never heard, and the retry answers the previous message's.
             while (history.size > mark) history.removeAt(history.lastIndex)
+            held.values.removeAll { it.userMessage == userMessages }
+            userMessages--
             throw e
         } finally {
             lastTurnEndedAt = clock()
         }
     }
 
-    fun reset() = history.clear()
+    fun reset() {
+        history.clear()
+        held.clear()
+    }
 
     /** The tool's spec, with [CONFIRMATION_ARG] added (and required) for [Tool.confirms] tools. */
     private fun specFor(tool: Tool): ToolSpec {
@@ -142,13 +193,26 @@ class Agent(
             return ToolOutcome("Error: arguments were not valid JSON") to null
         }
         val modelSays = (parsed[CONFIRMATION_ARG] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        val args = JsonObject(parsed - CONFIRMATION_ARG)
-        return runTool(tool, call, args) to modelSays
+        val outcome = runTool(call) { tool.invoke(JsonObject(parsed - CONFIRMATION_ARG)) }
+        return hold(call, outcome) to modelSays
     }
 
-    private suspend fun runTool(tool: Tool, call: ToolCall, args: JsonObject): ToolOutcome {
+    /** Holds back the action [outcome] waits on, if any, and tells the model how to confirm it. */
+    private fun hold(call: ToolCall, outcome: ToolOutcome): ToolOutcome {
+        val action = outcome.pending ?: return outcome
+        val ref = "c${++lastRef}"
+        held[ref] = Held(userMessages, action)
+        EventLog.log("agent", "Waiting for the user's yes ($ref): ${action.description}")
+        return outcome.copy(
+            result = outcome.result + "\nOnce the user agrees, call $CONFIRM_TOOL with ref '$ref'. If they change " +
+                "anything, call ${call.name} again instead.",
+            done = false,
+        )
+    }
+
+    private suspend fun runTool(call: ToolCall, block: suspend () -> ToolOutcome): ToolOutcome {
         return try {
-            tool.invoke(args).also {
+            block().also {
                 EventLog.log("tool", "${call.name}(${call.argumentsJson}) -> ${it.result}${it.afterTurn?.let { a -> " [after turn: ${a.description}]" } ?: ""}")
             }
         } catch (e: CancellationException) {
@@ -162,6 +226,9 @@ class Agent(
     companion object {
         /** The argument in which the model writes what to say if a [Tool.confirms] tool works. */
         const val CONFIRMATION_ARG = "confirmation"
+
+        /** The tool through which the model passes on the user's yes to a [PendingAction]. */
+        const val CONFIRM_TOOL = "confirm_action"
 
         private val CONFIRMATION_SCHEMA = stringProperty(
             "What to tell the user if this works: one short present-tense sentence, e.g. \"Starting navigation to " +

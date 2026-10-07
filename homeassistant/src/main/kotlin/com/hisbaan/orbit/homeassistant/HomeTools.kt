@@ -1,9 +1,8 @@
 package com.hisbaan.orbit.homeassistant
 
+import com.hisbaan.orbit.agent.PendingAction
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
-import com.hisbaan.orbit.agent.boolean
-import com.hisbaan.orbit.agent.booleanProperty
 import com.hisbaan.orbit.agent.objectSchema
 import com.hisbaan.orbit.agent.requireString
 import com.hisbaan.orbit.agent.string
@@ -30,17 +29,20 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
 
         override suspend fun invoke(args: JsonObject): ToolOutcome {
             val ha = connection() ?: return ToolOutcome("Home Assistant isn't connected. Tell the user to connect it in Orbit's settings.")
-            return try {
-                run(ha, args)
-            } catch (e: HaException) {
-                ToolOutcome(
-                    if (e.unauthorized) "Error: Home Assistant rejected Orbit's sign-in. Tell the user to sign in again in Orbit's settings."
-                    else "Error: ${e.message}",
-                )
-            }
+            return reportingErrors { run(ha, args) }
         }
 
         abstract suspend fun run(ha: HomeAssistant, args: JsonObject): ToolOutcome
+
+        /** Turns Home Assistant's errors into results the model can act on. */
+        protected suspend fun reportingErrors(block: suspend () -> ToolOutcome): ToolOutcome = try {
+            block()
+        } catch (e: HaException) {
+            ToolOutcome(
+                if (e.unauthorized) "Error: Home Assistant rejected Orbit's sign-in. Tell the user to sign in again in Orbit's settings."
+                else "Error: ${e.message}",
+            )
+        }
     }
 
     val command: Tool = object : HaTool() {
@@ -97,8 +99,7 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
                 "'Sunset lamp', service 'turn_on'), or entities 'all' with a domain.service. E.g. 'turn_on' with data " +
                 "{\"brightness_pct\": 40, \"color_name\": \"blue\"}, 'climate.set_temperature' with {\"temperature\": 21}, " +
                 "'cover.open_cover', 'scene.turn_on'. The result is the devices' state afterwards. Unlocking, disarming an " +
-                "alarm or opening a garage or gate needs the user's confirmation: call once without confirmed, ask, then " +
-                "call again with confirmed=true.",
+                "alarm or opening a garage or gate is held until the user confirms: the result tells you what to ask.",
             parameters = objectSchema(
                 listOf("service"),
                 "service" to stringProperty("'domain.service' (required with area or 'all'), or just the service, e.g. 'turn_on'"),
@@ -108,7 +109,6 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
                     put("type", JsonPrimitive("object"))
                     put("description", JsonPrimitive("Service data besides the target, e.g. {\"brightness_pct\": 40}"))
                 },
-                "confirmed" to booleanProperty("True only once the user has confirmed a sensitive action"),
             ),
         )
 
@@ -130,32 +130,32 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
                 is HaTargets.Resolution.Problem -> return ToolOutcome("Not done: ${resolution.message}")
                 is HaTargets.Resolution.Found -> resolution.entities to resolution.skipped
             }
-            if (args.boolean("confirmed") != true) {
-                val sensitive = targets.filter { isSensitive(explicitDomain ?: it.domain, service, it) }
-                if (sensitive.isNotEmpty()) {
-                    return ToolOutcome(
-                        "Not done yet: ${service.replace('_', ' ')} ${sensitive.joinToString { it.name }} needs confirmation. " +
-                            "Ask the user, and call again with confirmed=true if they agree.",
-                    )
+            val perform: suspend () -> ToolOutcome = {
+                // One call per domain, so a bare service ("turn_off") works across lights and switches.
+                val byDomain = targets.groupBy { explicitDomain ?: it.domain }
+                val reported = mutableMapOf<String, HaEntity>()
+                for ((domain, group) in byDomain) {
+                    val body = JsonObject(data + ("entity_id" to JsonArray(group.map { JsonPrimitive(it.entityId) })))
+                    ha.callService(domain, service, body).forEach { reported[it.entityId] = it }
                 }
+                val after = settle(ha, targets, reported, service.takeIf { data.isEmpty() }?.let(HaTargets::targetState))
+
+                val what = "$requested on " + (area?.let { "${targets.size} in $it" } ?: targets.joinToString { it.name })
+                val lines = targets.map { before ->
+                    val now = after[before.entityId]
+                    if (now != null) now.describe() else "${before.describe()} (not updated yet; the device may still be changing)"
+                }
+                val skippedNote = if (skipped.isEmpty()) "" else "\nSkipped, unavailable: ${skipped.joinToString { it.name }}"
+                ToolOutcome("Called $what. Now:\n" + lines.joinToString("\n") + skippedNote)
             }
 
-            // One call per domain, so a bare service ("turn_off") works across lights and switches.
-            val byDomain = targets.groupBy { explicitDomain ?: it.domain }
-            val reported = mutableMapOf<String, HaEntity>()
-            for ((domain, group) in byDomain) {
-                val body = JsonObject(data + ("entity_id" to JsonArray(group.map { JsonPrimitive(it.entityId) })))
-                ha.callService(domain, service, body).forEach { reported[it.entityId] = it }
-            }
-            val after = settle(ha, targets, reported, service.takeIf { data.isEmpty() }?.let(HaTargets::targetState))
-
-            val what = "$requested on " + (area?.let { "${targets.size} in $it" } ?: targets.joinToString { it.name })
-            val lines = targets.map { before ->
-                val now = after[before.entityId]
-                if (now != null) now.describe() else "${before.describe()} (not updated yet; the device may still be changing)"
-            }
-            val skippedNote = if (skipped.isEmpty()) "" else "\nSkipped, unavailable: ${skipped.joinToString { it.name }}"
-            return ToolOutcome("Called $what. Now:\n" + lines.joinToString("\n") + skippedNote)
+            val sensitive = targets.filter { isSensitive(explicitDomain ?: it.domain, service, it) }
+            if (sensitive.isEmpty()) return perform()
+            val what = "${service.replace('_', ' ')} ${sensitive.joinToString { it.name }}"
+            return ToolOutcome(
+                "Not done yet: $what needs the user's confirmation. Ask them.",
+                pending = PendingAction(what) { reportingErrors(perform) },
+            )
         }
     }
 
