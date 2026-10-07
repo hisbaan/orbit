@@ -22,6 +22,7 @@ import com.hisbaan.orbit.tools.NotificationsTool
 import com.hisbaan.orbit.tools.OpenAppTool
 import com.hisbaan.orbit.tools.PlayMusicTool
 import com.hisbaan.orbit.tools.PlaySavedPlaylistTool
+import com.hisbaan.orbit.tools.ReadScreenTool
 import com.hisbaan.orbit.tools.SetAlarmTool
 import com.hisbaan.orbit.tools.SetTimerTool
 import com.hisbaan.orbit.tools.WeatherTool
@@ -85,6 +86,7 @@ class OrbitApp : Application() {
             CurrentTimeTool(),
             WeatherTool(this, OpenMeteo(httpClient)),
             NotificationsTool(this),
+            ReadScreenTool(this),
             CallContactTool(this),
             OpenAppTool(this),
         ) + CalendarAccess(this).let { calendar ->

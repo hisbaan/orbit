@@ -183,7 +183,27 @@ class OpenAiChatCompletions(
             }
             is ChatMessage.User -> buildJsonObject {
                 put("role", "user")
-                put("content", message.content)
+                if (message.images.isEmpty()) {
+                    put("content", message.content)
+                } else {
+                    // Content parts: the text, then each image as a data URL.
+                    put(
+                        "content",
+                        JsonArray(
+                            listOf(
+                                buildJsonObject {
+                                    put("type", "text")
+                                    put("text", message.content)
+                                },
+                            ) + message.images.map { image ->
+                                buildJsonObject {
+                                    put("type", "image_url")
+                                    put("image_url", buildJsonObject { put("url", "data:${image.mimeType};base64,${image.base64}") })
+                                }
+                            },
+                        ),
+                    )
+                }
             }
             is ChatMessage.Assistant -> buildJsonObject {
                 put("role", "assistant")

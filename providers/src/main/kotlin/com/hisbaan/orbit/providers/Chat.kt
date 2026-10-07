@@ -5,9 +5,15 @@ import kotlinx.serialization.json.JsonObject
 /** Provider-neutral chat model. Transports translate it to their wire format. */
 sealed interface ChatMessage {
     data class System(val content: String) : ChatMessage
-    data class User(val content: String) : ChatMessage
+    /** [images] go to vision-capable models alongside the text (e.g. a screenshot). */
+    data class User(val content: String, val images: List<ChatImage> = emptyList()) : ChatMessage
     data class Assistant(val content: String?, val toolCalls: List<ToolCall> = emptyList()) : ChatMessage
     data class ToolResult(val toolCallId: String, val content: String) : ChatMessage
+}
+
+/** An image for the model, e.g. `image/jpeg` with its base64 data. */
+data class ChatImage(val mimeType: String, val base64: String) {
+    override fun toString() = "ChatImage($mimeType, ${base64.length} base64 chars)"
 }
 
 data class ToolCall(val id: String, val name: String, val argumentsJson: String)

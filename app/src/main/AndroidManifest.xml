@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <!-- Online TTS voices fall back to offline ones when there's no network. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Android 17: an assistant needs this (normal) permission to get the screen's text. -->
+    <uses-permission android:name="android.permission.READ_ASSIST_STRUCTURE_SCREEN_CONTENT" />
 
     <uses-feature
         android:name="android.hardware.bluetooth"

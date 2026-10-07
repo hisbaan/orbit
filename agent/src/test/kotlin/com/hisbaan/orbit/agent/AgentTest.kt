@@ -1,5 +1,6 @@
 package com.hisbaan.orbit.agent
 
+import com.hisbaan.orbit.providers.ChatImage
 import com.hisbaan.orbit.providers.ChatMessage
 import com.hisbaan.orbit.providers.ChatRequest
 import com.hisbaan.orbit.providers.ChatResponse
@@ -148,6 +149,20 @@ class AgentTest {
 
         assertEquals("It's 14 degrees and cloudy.", agent.respond("weather?", transport, "m").reply)
         assertEquals(2, transport.requests.size)
+    }
+
+    @Test
+    fun `passes tool images to the model after the results`() = runTest {
+        val shot = ChatImage("image/jpeg", "QUJD")
+        val screen = RecordingTool("read_screen") { ToolOutcome("Screen text: Dinner Friday 7pm", images = listOf(shot)) }
+        val transport = FakeTransport(calls(ToolCall("1", "read_screen", "{}")), text("Dinner on Friday at 7."))
+        val agent = Agent(listOf(screen), systemPrompt = { "sys" })
+
+        agent.respond("what's on my screen", transport, "m")
+
+        val messages = transport.requests[1].messages
+        assertTrue(messages[messages.size - 2] is ChatMessage.ToolResult)
+        assertEquals(ChatMessage.User("Images from read_screen:", listOf(shot)), messages.last())
     }
 
     @Test

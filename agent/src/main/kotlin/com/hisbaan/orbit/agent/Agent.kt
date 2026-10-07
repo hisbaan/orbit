@@ -1,6 +1,7 @@
 package com.hisbaan.orbit.agent
 
 import com.hisbaan.orbit.diagnostics.EventLog
+import com.hisbaan.orbit.providers.ChatImage
 import com.hisbaan.orbit.providers.ChatMessage
 import com.hisbaan.orbit.providers.ChatRequest
 import com.hisbaan.orbit.providers.ChatTransport
@@ -79,14 +80,19 @@ class Agent(
                 history += ChatMessage.Assistant(response.text.ifBlank { null }, response.toolCalls)
                 var allDone = true
                 val written = mutableListOf<String>()
+                val images = mutableListOf<Pair<String, List<ChatImage>>>()
                 for (call in response.toolCalls) {
                     onToolCall(call)
                     calls += call
                     val (outcome, modelSays) = runTool(call)
                     outcome.afterTurn?.let(afterTurn::add)
                     allDone = allDone && outcome.done
+                    if (outcome.images.isNotEmpty()) images += call.name to outcome.images
                     modelSays?.let(written::add)
                     history += ChatMessage.ToolResult(call.id, outcome.result)
+                }
+                if (images.isNotEmpty()) {
+                    history += ChatMessage.User("Images from ${images.joinToString { it.first }}:", images.flatMap { it.second })
                 }
                 // Every action went through and the model said what to say: end the turn now
                 // instead of asking the model again, saving a round trip. Text it wrote alongside

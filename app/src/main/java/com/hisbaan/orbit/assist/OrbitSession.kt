@@ -3,6 +3,7 @@ package com.hisbaan.orbit.assist
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
 import android.view.View
@@ -31,6 +32,7 @@ import com.hisbaan.orbit.MainActivity
 import com.hisbaan.orbit.OrbitApp
 import com.hisbaan.orbit.assistant.Phase
 import com.hisbaan.orbit.diagnostics.EventLog
+import com.hisbaan.orbit.tools.ScreenContext
 import com.hisbaan.orbit.ui.OrbitTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -122,6 +124,7 @@ class OrbitSession(context: Context) :
         val source = args?.getString(ARG_SOURCE) ?: if (showFlags and SHOW_SOURCE_ASSIST_GESTURE != 0) "assist gesture" else "session"
         val device = args?.let { BundleCompat.getParcelable(it, ARG_DEVICE, BluetoothDevice::class.java) }
         EventLog.log("assist", "Overlay shown: source=$source flags=$showFlags")
+        ScreenContext.begin(text = showFlags and SHOW_WITH_ASSIST != 0, screenshot = showFlags and SHOW_WITH_SCREENSHOT != 0)
         app.assistant.trigger(source, device)
     }
 
@@ -130,7 +133,20 @@ class OrbitSession(context: Context) :
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         isWindowShown = false
         cardVisibility = MutableTransitionState(false)
+        // What was on screen is only for this overlay; don't keep it around.
+        ScreenContext.clear()
         super.onHide()
+    }
+
+    /** The app behind the overlay, as text (one call per activity). Kept for read_screen. */
+    override fun onHandleAssist(state: AssistState) {
+        EventLog.log("screen", "Assist data ${state.index + 1}/${state.count}: ${state.assistStructure?.activityComponent?.packageName ?: "none"}")
+        ScreenContext.onStructure(state.assistStructure, context.packageName)
+    }
+
+    override fun onHandleScreenshot(screenshot: Bitmap?) {
+        EventLog.log("screen", "Screenshot: ${screenshot?.let { "${it.width}x${it.height}" } ?: "none"}")
+        ScreenContext.onScreenshot(screenshot)
     }
 
     override fun onBackPressed() = close()

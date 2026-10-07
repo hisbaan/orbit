@@ -1,5 +1,6 @@
 package com.hisbaan.orbit.agent
 
+import com.hisbaan.orbit.providers.ChatImage
 import com.hisbaan.orbit.providers.ToolSpec
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -34,11 +35,15 @@ interface Tool {
  *
  * [done]: the action went through and the model has nothing to learn from [result], so the
  * confirmation it wrote into the call can be the whole reply (see [Tool.confirms]).
+ *
+ * [images] (e.g. a screenshot) reach the model in a message after the tool results, since
+ * tool results themselves are text only.
  */
 data class ToolOutcome(
     val result: String,
     val afterTurn: AfterTurnAction? = null,
     val done: Boolean = false,
+    val images: List<ChatImage> = emptyList(),
 )
 
 class AfterTurnAction(

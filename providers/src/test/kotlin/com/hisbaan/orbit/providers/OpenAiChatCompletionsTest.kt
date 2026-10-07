@@ -98,6 +98,14 @@ class OpenAiChatCompletionsTest {
     }
 
     @Test
+    fun `sends images as content parts`() {
+        val request = ChatRequest("m", listOf(ChatMessage.User("What's on screen?", listOf(ChatImage("image/jpeg", "QUJD")))))
+        val content = OpenAiChatCompletions.encodeRequest(request)["messages"]!!.jsonArray[0].jsonObject["content"]!!.jsonArray
+        assertEquals("""{"type":"text","text":"What's on screen?"}""", content[0].toString())
+        assertEquals("""{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,QUJD"}}""", content[1].toString())
+    }
+
+    @Test
     fun `encodes tool round trip messages`() = runTest {
         val captured = mutableListOf<String>()
         val conversation = ChatRequest(

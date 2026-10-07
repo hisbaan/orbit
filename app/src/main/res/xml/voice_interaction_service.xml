@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    usesAssist*: from Android 17 (targetSdk 37), the system only hands the assistant the screen's
+    text and a screenshot (for read_screen) when it declares them here; showSession flags alone
+    are stripped.
+-->
 <voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:recognitionService="com.hisbaan.orbit.assist.OrbitRecognitionService"
     android:sessionService="com.hisbaan.orbit.assist.OrbitSessionService"
     android:settingsActivity="com.hisbaan.orbit.MainActivity"
     android:supportsAssist="true"
     android:supportsLaunchVoiceAssistFromKeyguard="true"
-    android:supportsLocalInteraction="true" />
+    android:supportsLocalInteraction="true"
+    android:usesAssistData="true"
+    android:usesAssistScreenshots="true"
+    android:usesAssistStructureScreenContent="true"
+    tools:targetApi="37" />
