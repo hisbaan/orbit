@@ -4,6 +4,7 @@ import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
 import android.view.View
@@ -110,6 +111,7 @@ class OrbitSession(context: Context) :
                             app.assistant.stopListening()
                         },
                         openApp = ::openApp,
+                        openLink = ::openLink,
                     ),
                 )
             }
@@ -196,6 +198,18 @@ class OrbitSession(context: Context) :
     private fun openApp() {
         hide()
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /** Opens a card's link: `app:<package>` launches that app, anything else is a web URL. */
+    private fun openLink(link: String) {
+        val intent = if (link.startsWith("app:")) {
+            context.packageManager.getLaunchIntentForPackage(link.removePrefix("app:")) ?: return
+        } else {
+            Intent(Intent.ACTION_VIEW, Uri.parse(link))
+        }
+        EventLog.log("assist", "Opening card link $link")
+        hide()
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     companion object {

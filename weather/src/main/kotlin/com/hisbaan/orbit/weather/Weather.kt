@@ -61,8 +61,13 @@ data class Day(
 )
 
 data class Forecast(val current: Current, val hours: List<Hour>, val days: List<Day>, val units: Units) {
-    /** Plain text for the model: now, the next hours, then each day. Times are local to the place. */
-    fun describe(place: String): String = buildString {
+    /**
+     * Plain text for the model: now, the next [maxHours] hours, then [maxDays] days. Times are
+     * local to the place.
+     */
+    fun describe(place: String, maxHours: Int = Int.MAX_VALUE, maxDays: Int = Int.MAX_VALUE): String = buildString {
+        val hours = hours.take(maxHours)
+        val days = days.take(maxDays)
         val t = units.temperature
         append("Weather for $place (local time ${current.time.timePart()}).\n")
         append("Now: ${current.condition.text}, ${current.temperature.whole()}$t")

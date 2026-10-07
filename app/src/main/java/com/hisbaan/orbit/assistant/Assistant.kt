@@ -10,6 +10,7 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.hisbaan.orbit.agent.AfterTurnAction
 import com.hisbaan.orbit.agent.Agent
+import com.hisbaan.orbit.agent.Card
 import com.hisbaan.orbit.agent.SentenceChunker
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.audio.AudioFocus
@@ -63,6 +64,8 @@ data class AssistantState(
     val reply: String? = null,
     val actions: List<String> = emptyList(),
     val error: String? = null,
+    /** Shown under the reply, e.g. a weather card. */
+    val cards: List<Card> = emptyList(),
 )
 
 /**
@@ -351,6 +354,7 @@ class Assistant(
                     },
                     // A confirmation written alongside a tool call that didn't go through.
                     // A one-sentence confirmation is still in the chunker, so nothing was said.
+                    onCard = { card -> _state.update { it.copy(cards = it.cards + card) } },
                     onDiscardText = {
                         shown.setLength(0)
                         chunker.clear()

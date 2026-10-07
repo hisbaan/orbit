@@ -45,13 +45,15 @@ class WeatherTool(
     context: Context,
     private val geocoder: OpenMeteo,
     private val provider: suspend () -> WeatherProvider,
+    private val latest: LatestForecast,
 ) : Tool {
     private val location = DeviceLocation(context)
 
     override val spec = ToolSpec(
         name = "get_weather",
         description = "Current weather, the next 12 hours (temperature, conditions, chance of rain) and a daily forecast. " +
-            "Uses the phone's location unless a place is given. Answer the user's actual question from it, briefly.",
+            "Uses the phone's location unless a place is given. Answer the user's actual question from it, briefly, " +
+            "and show it with show_weather_card.",
         parameters = objectSchema(
             emptyList(),
             "place" to stringProperty("A city or town, only if the user named one, e.g. 'Paris'"),
@@ -67,12 +69,14 @@ class WeatherTool(
         val latitude: Double
         val longitude: Double
         val label: Deferred<String>
+        val shortName: Deferred<String>
         if (name != null) {
             val place = geocoder.geocode(name, Locale.getDefault().language)
                 ?: return@coroutineScope ToolOutcome("No place called '$name' was found. Ask the user where they mean.")
             latitude = place.latitude
             longitude = place.longitude
             label = CompletableDeferred(place.label)
+            shortName = CompletableDeferred(place.name)
         } else {
             val here = location.current() ?: return@coroutineScope ToolOutcome(
                 if (location.granted) "The phone's location isn't available right now. Ask the user which city."
@@ -81,27 +85,34 @@ class WeatherTool(
             latitude = here.latitude
             longitude = here.longitude
             // The place name only labels the answer: look it up while the forecast loads.
-            label = async { "the user's location" + (location.locality(here)?.let { " (near $it)" } ?: "") }
+            val locality = async { location.locality(here) }
+            label = async { "the user's location" + (locality.await()?.let { " (near $it)" } ?: "") }
+            shortName = async { locality.await() ?: "Here" }
         }
         val chosen = provider()
         var note = ""
+        // A day and a week for the card; the model gets the next 12 hours and the days it asked for.
         val forecast = try {
-            chosen.forecast(latitude, longitude, days, imperial)
+            chosen.forecast(latitude, longitude, CARD_DAYS, imperial, CARD_HOURS)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             if (chosen === geocoder) throw e
             EventLog.log("weather", "${chosen.name} failed ($e); using Open-Meteo")
             note = "\n(${chosen.name} didn't answer, so this is from Open-Meteo.)"
-            geocoder.forecast(latitude, longitude, days, imperial)
+            geocoder.forecast(latitude, longitude, CARD_DAYS, imperial, CARD_HOURS)
         }
-        val text = forecast.describe(label.await()) + note
-        EventLog.log("weather", "${if (note.isEmpty()) chosen.name else geocoder.name} in ${System.currentTimeMillis() - t0}ms")
+        val source = if (note.isEmpty()) chosen.name else geocoder.name
+        latest.snapshot = LatestForecast.Snapshot(forecast, shortName.await(), latitude, longitude, source, System.currentTimeMillis())
+        val text = forecast.describe(label.await(), maxHours = 12, maxDays = days) + note
+        EventLog.log("weather", "$source in ${System.currentTimeMillis() - t0}ms")
         ToolOutcome(text)
     }
 
     private companion object {
         val IMPERIAL_COUNTRIES = setOf("US", "LR", "MM")
+        const val CARD_HOURS = 24
+        const val CARD_DAYS = 7
     }
 }
 

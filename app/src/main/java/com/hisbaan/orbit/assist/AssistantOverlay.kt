@@ -92,6 +92,8 @@ class OverlayActions(
     /** The user started typing: stop listening so the mic isn't fighting the keyboard. */
     val typing: () -> Unit,
     val openApp: () -> Unit,
+    /** A card was tapped: open its link (a web URL, or `app:<package>`). */
+    val openLink: (String) -> Unit,
 )
 
 private val CardShape = RoundedCornerShape(28.dp)
@@ -140,7 +142,7 @@ private fun Card(state: AssistantState, actions: OverlayActions) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Header(state.phase, actions.openApp)
-            if (state.hasContent) Body(state, Modifier.padding(end = 8.dp))
+            if (state.hasContent) Body(state, actions.openLink, Modifier.padding(end = 8.dp))
             InputRow(state.phase, actions)
         }
     }
@@ -202,8 +204,9 @@ private fun Header(phase: Phase, openApp: () -> Unit) {
 }
 
 @Composable
-private fun Body(state: AssistantState, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun Body(state: AssistantState, openLink: (String) -> Unit, modifier: Modifier = Modifier) {
+    // Cards can make this tall: cap it and let it scroll, keeping the input row in view.
+    Column(modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val heard = state.transcript ?: state.partialTranscript.takeIf { it.isNotBlank() }
         heard?.let {
             Text(
@@ -224,7 +227,8 @@ private fun Body(state: AssistantState, modifier: Modifier = Modifier) {
                 modifier = Modifier.heightIn(max = 220.dp).verticalScroll(scroll),
             )
         }
-        val used = state.actions.map(::toolLabel).distinct()
+        state.cards.forEach { CardView(it, openLink) }
+        val used = state.actions.filterNot { it.startsWith("show_") }.map(::toolLabel).distinct()
         if (used.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 used.forEach { ToolChip(it) }
@@ -339,7 +343,7 @@ private fun PhaseIndicator(phase: Phase) {
 }
 
 private val AssistantState.hasContent: Boolean
-    get() = transcript != null || partialTranscript.isNotBlank() || reply != null || actions.isNotEmpty() || error != null
+    get() = transcript != null || partialTranscript.isNotBlank() || reply != null || actions.isNotEmpty() || error != null || cards.isNotEmpty()
 
 private fun phaseLabel(phase: Phase): String = when (phase) {
     Phase.IDLE -> "Ready"

@@ -166,6 +166,15 @@ class AgentTest {
     }
 
     @Test
+    fun `info cards carry their rows`() = runTest {
+        val args = """{"title":"Tomorrow","rows":[{"label":"09:00","value":"Standup"},{"label":"14:00","value":"Dentist"}],"confirmation":"Two events tomorrow."}"""
+        val cards = mutableListOf<Card>()
+        Agent(listOf(ShowInfoCardTool()), systemPrompt = { "sys" })
+            .respond("what's tomorrow", FakeTransport(calls(ToolCall("1", "show_info_card", args))), "m", onCard = { cards += it })
+        assertEquals(Card.Info("Tomorrow", null, listOf(Card.Row("09:00", "Standup"), Card.Row("14:00", "Dentist"))), cards.single())
+    }
+
+    @Test
     fun `reports unknown tools and bad arguments to the model`() = runTest {
         val transport = FakeTransport(
             calls(ToolCall("1", "nope", "{}"), ToolCall("2", "media_control", "{not json")),

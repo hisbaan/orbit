@@ -51,6 +51,7 @@ class Agent(
         onToolCall: (ToolCall) -> Unit = {},
         onText: (String) -> Unit = {},
         onDiscardText: () -> Unit = {},
+        onCard: (Card) -> Unit = {},
     ): AgentResult {
         if (history.isNotEmpty() && clock() - lastTurnEndedAt > historyTtlMs) {
             EventLog.log("agent", "History expired; starting a new conversation")
@@ -86,6 +87,7 @@ class Agent(
                     calls += call
                     val (outcome, modelSays) = runTool(call)
                     outcome.afterTurn?.let(afterTurn::add)
+                    outcome.cards.forEach(onCard)
                     allDone = allDone && outcome.done
                     if (outcome.images.isNotEmpty()) images += call.name to outcome.images
                     modelSays?.let(written::add)

@@ -1,6 +1,7 @@
 package com.hisbaan.orbit
 
 import android.app.Application
+import com.hisbaan.orbit.agent.ShowInfoCardTool
 import com.hisbaan.orbit.assist.UnlockActivity
 import com.hisbaan.orbit.assistant.Assistant
 import com.hisbaan.orbit.diagnostics.EventLog
@@ -16,6 +17,7 @@ import com.hisbaan.orbit.tools.CallContactTool
 import com.hisbaan.orbit.tools.CreateCalendarEventTool
 import com.hisbaan.orbit.tools.CurrentTimeTool
 import com.hisbaan.orbit.tools.DeleteCalendarEventTool
+import com.hisbaan.orbit.tools.LatestForecast
 import com.hisbaan.orbit.tools.MediaControlTool
 import com.hisbaan.orbit.tools.MediaInfoTool
 import com.hisbaan.orbit.tools.MediaSessions
@@ -27,6 +29,7 @@ import com.hisbaan.orbit.tools.PlaySavedPlaylistTool
 import com.hisbaan.orbit.tools.ReadScreenTool
 import com.hisbaan.orbit.tools.SetAlarmTool
 import com.hisbaan.orbit.tools.SetTimerTool
+import com.hisbaan.orbit.tools.ShowWeatherCardTool
 import com.hisbaan.orbit.tools.WeatherTool
 import com.hisbaan.orbit.weather.GoogleWeather
 import com.hisbaan.orbit.weather.OpenMeteo
@@ -80,6 +83,7 @@ class OrbitApp : Application() {
     }
 
     private val openMeteo by lazy { OpenMeteo(httpClient) }
+    private val latestForecast = LatestForecast()
 
     /** The forecast source [settings] choose; Open-Meteo when it needs a key that isn't set. */
     fun weatherProvider(settings: AppSettings): WeatherProvider = when (settings.weatherProvider) {
@@ -98,7 +102,9 @@ class OrbitApp : Application() {
             SetTimerTool(this),
             SetAlarmTool(this),
             CurrentTimeTool(),
-            WeatherTool(this, openMeteo, provider = { weatherProvider(settings.current()) }),
+            WeatherTool(this, openMeteo, provider = { weatherProvider(settings.current()) }, latest = latestForecast),
+            ShowWeatherCardTool(this, latestForecast),
+            ShowInfoCardTool(),
             NotificationsTool(this),
             ReadScreenTool(this),
             CallContactTool(this),

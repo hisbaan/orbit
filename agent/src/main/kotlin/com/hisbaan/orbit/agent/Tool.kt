@@ -37,13 +37,14 @@ interface Tool {
  * confirmation it wrote into the call can be the whole reply (see [Tool.confirms]).
  *
  * [images] (e.g. a screenshot) reach the model in a message after the tool results, since
- * tool results themselves are text only.
+ * tool results themselves are text only. [cards] are shown to the user on screen.
  */
 data class ToolOutcome(
     val result: String,
     val afterTurn: AfterTurnAction? = null,
     val done: Boolean = false,
     val images: List<ChatImage> = emptyList(),
+    val cards: List<Card> = emptyList(),
 )
 
 class AfterTurnAction(
