@@ -192,6 +192,10 @@ fun SettingsScreen(
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
 
+        Section("Weather") {
+            WeatherSettings(draft, state.dirty, state.weatherStatus, vm)
+        }
+
         Section("Calendar") {
             CalendarSettings(draft, state.calendars, vm)
         }
@@ -228,6 +232,51 @@ private fun Section(title: String, content: @Composable () -> Unit) {
             content()
         }
     }
+}
+
+@Composable
+private fun WeatherSettings(draft: AppSettings, dirty: Boolean, status: String?, vm: SettingsViewModel) {
+    var open by remember { mutableStateOf(false) }
+    val source = draft.weatherProvider
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Forecasts from", modifier = Modifier.weight(1f))
+        Box {
+            TextButton(onClick = { open = true }) { Text(source.label) }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                WeatherSource.entries.forEach { option ->
+                    DropdownMenuItem(text = { Text(option.label) }, onClick = {
+                        open = false
+                        vm.editAndSave { it.copy(weatherProvider = option) }
+                    })
+                }
+            }
+        }
+    }
+    Text(source.about, style = MaterialTheme.typography.bodySmall)
+    val key = when (source) {
+        WeatherSource.OPEN_METEO -> null
+        WeatherSource.PIRATE_WEATHER -> draft.pirateWeatherKey
+        WeatherSource.GOOGLE -> draft.googleWeatherKey
+    }
+    if (key != null) {
+        OutlinedTextField(
+            value = key,
+            onValueChange = { v ->
+                vm.edit { if (source == WeatherSource.GOOGLE) it.copy(googleWeatherKey = v) else it.copy(pirateWeatherKey = v) }
+            },
+            label = { Text("${source.label} API key") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (key.isBlank()) Text("Without a key, Orbit uses Open-Meteo.", style = MaterialTheme.typography.bodySmall)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = vm::testWeather) { Text("Test") }
+        if (key != null) Button(onClick = { vm.save() }, enabled = dirty) { Text("Save") }
+    }
+    status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 }
 
 @Composable

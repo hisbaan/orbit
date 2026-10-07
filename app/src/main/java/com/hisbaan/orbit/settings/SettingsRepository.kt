@@ -1,6 +1,7 @@
 package com.hisbaan.orbit.settings
 
 import android.content.Context
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -41,6 +42,10 @@ data class AppSettings(
     val ttsVoice: String? = null,
     /** Calendar provider id new events go to; null picks a primary calendar. */
     val defaultCalendarId: Long? = null,
+    val weatherProvider: WeatherSource = WeatherSource.OPEN_METEO,
+    /** API keys for the keyed weather providers. Stored encrypted. */
+    val pirateWeatherKey: String = "",
+    val googleWeatherKey: String = "",
 ) {
     val isProviderConfigured: Boolean get() = baseUrl.isNotBlank() && model.isNotBlank()
 
@@ -48,6 +53,13 @@ data class AppSettings(
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
         val REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high")
     }
+}
+
+/** Where forecasts come from. Open-Meteo needs no key; the others use [AppSettings]' keys. */
+enum class WeatherSource(val label: String, val about: String) {
+    OPEN_METEO("Open-Meteo", "Free, no key needed."),
+    PIRATE_WEATHER("Pirate Weather", "The source behind Merry Sky: high-resolution national models. Free key from pirateweather.net."),
+    GOOGLE("Google", "The data behind Google's weather app. Needs a Google Cloud API key with the Weather API enabled (billed beyond Google's free usage)."),
 }
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
@@ -70,6 +82,9 @@ class SettingsRepository(context: Context) {
         val defaultSounds = stringPreferencesKey("default_sounds")
         val ttsVoice = stringPreferencesKey("tts_voice")
         val defaultCalendarId = longPreferencesKey("default_calendar_id")
+        val weatherProvider = stringPreferencesKey("weather_provider")
+        val pirateWeatherKey = stringPreferencesKey("pirate_weather_key_encrypted")
+        val googleWeatherKey = stringPreferencesKey("google_weather_key_encrypted")
 
         /** Before silent existed: the addresses that were alerting. Read once, then replaced by [headsetSounds]. */
         val legacyAlertingDevices = stringSetPreferencesKey("alerting_sound_devices")
@@ -94,6 +109,9 @@ class SettingsRepository(context: Context) {
             prefs[Keys.defaultSounds] = new.defaultSounds.name
             if (new.ttsVoice != null) prefs[Keys.ttsVoice] = new.ttsVoice else prefs.remove(Keys.ttsVoice)
             if (new.defaultCalendarId != null) prefs[Keys.defaultCalendarId] = new.defaultCalendarId else prefs.remove(Keys.defaultCalendarId)
+            prefs[Keys.weatherProvider] = new.weatherProvider.name
+            if (new.pirateWeatherKey != old.pirateWeatherKey) prefs.putSecret(Keys.pirateWeatherKey, new.pirateWeatherKey)
+            if (new.googleWeatherKey != old.googleWeatherKey) prefs.putSecret(Keys.googleWeatherKey, new.googleWeatherKey)
             prefs.remove(Keys.legacyAlertingDevices)
             if (new.homeAssistant != old.homeAssistant) {
                 val encoded = encodeCredential(new.homeAssistant)
@@ -120,7 +138,14 @@ class SettingsRepository(context: Context) {
         defaultSounds = prefs[Keys.defaultSounds]?.let { name -> EarconStyle.entries.firstOrNull { it.name == name } } ?: EarconStyle.GENTLE,
         ttsVoice = prefs[Keys.ttsVoice],
         defaultCalendarId = prefs[Keys.defaultCalendarId],
+        weatherProvider = prefs[Keys.weatherProvider]?.let { name -> WeatherSource.entries.firstOrNull { it.name == name } } ?: WeatherSource.OPEN_METEO,
+        pirateWeatherKey = prefs[Keys.pirateWeatherKey]?.let(SecretStore::decrypt).orEmpty(),
+        googleWeatherKey = prefs[Keys.googleWeatherKey]?.let(SecretStore::decrypt).orEmpty(),
     )
+
+    private fun MutablePreferences.putSecret(key: Preferences.Key<String>, value: String) {
+        if (value.isBlank()) remove(key) else this[key] = SecretStore.encrypt(value.trim())
+    }
 
     private fun decodeHeadsetSounds(entries: Set<String>): Map<String, EarconStyle> = entries.mapNotNull { entry ->
         val (address, name) = entry.split('=', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null

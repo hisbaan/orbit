@@ -6,7 +6,9 @@ import com.hisbaan.orbit.assistant.Assistant
 import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.homeassistant.HomeAssistant
 import com.hisbaan.orbit.homeassistant.HomeTools
+import com.hisbaan.orbit.settings.AppSettings
 import com.hisbaan.orbit.settings.SettingsRepository
+import com.hisbaan.orbit.settings.WeatherSource
 import com.hisbaan.orbit.speech.TtsSpeaker
 import com.hisbaan.orbit.tools.CalendarAccess
 import com.hisbaan.orbit.tools.CalendarEventsTool
@@ -26,7 +28,10 @@ import com.hisbaan.orbit.tools.ReadScreenTool
 import com.hisbaan.orbit.tools.SetAlarmTool
 import com.hisbaan.orbit.tools.SetTimerTool
 import com.hisbaan.orbit.tools.WeatherTool
+import com.hisbaan.orbit.weather.GoogleWeather
 import com.hisbaan.orbit.weather.OpenMeteo
+import com.hisbaan.orbit.weather.PirateWeather
+import com.hisbaan.orbit.weather.WeatherProvider
 import com.hisbaan.orbit.ytmusic.YouTubeMusicSearch
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -74,6 +79,15 @@ class OrbitApp : Application() {
             .stateIn(appScope, SharingStarted.Eagerly, null)
     }
 
+    private val openMeteo by lazy { OpenMeteo(httpClient) }
+
+    /** The forecast source [settings] choose; Open-Meteo when it needs a key that isn't set. */
+    fun weatherProvider(settings: AppSettings): WeatherProvider = when (settings.weatherProvider) {
+        WeatherSource.OPEN_METEO -> null
+        WeatherSource.PIRATE_WEATHER -> settings.pirateWeatherKey.takeIf { it.isNotBlank() }?.let { PirateWeather(httpClient, it) }
+        WeatherSource.GOOGLE -> settings.googleWeatherKey.takeIf { it.isNotBlank() }?.let { GoogleWeather(httpClient, it) }
+    } ?: openMeteo
+
     val tools by lazy {
         listOf(
             MediaControlTool(this, mediaSessions) { musicPackage.value },
@@ -84,7 +98,7 @@ class OrbitApp : Application() {
             SetTimerTool(this),
             SetAlarmTool(this),
             CurrentTimeTool(),
-            WeatherTool(this, OpenMeteo(httpClient)),
+            WeatherTool(this, openMeteo, provider = { weatherProvider(settings.current()) }),
             NotificationsTool(this),
             ReadScreenTool(this),
             CallContactTool(this),

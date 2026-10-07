@@ -1,0 +1,75 @@
+{
+ "forecastHours": [
+  {
+   "interval": {
+    "startTime": "2026-10-06T15:00:00Z",
+    "endTime": "2026-10-06T16:00:00Z"
+   },
+   "displayDateTime": {
+    "year": 2026,
+    "month": 10,
+    "day": 6,
+    "hours": 11,
+    "utcOffset": "-14400s"
+   },
+   "weatherCondition": {
+    "type": "MOSTLY_CLEAR",
+    "description": {
+     "text": "Mostly sunny"
+    }
+   },
+   "temperature": {
+    "degrees": 11.0,
+    "unit": "CELSIUS"
+   },
+   "precipitation": {
+    "probability": {
+     "percent": 5,
+     "type": "RAIN"
+    }
+   },
+   "wind": {
+    "speed": {
+     "value": 11
+    }
+   }
+  },
+  {
+   "interval": {
+    "startTime": "2026-10-06T16:00:00Z",
+    "endTime": "2026-10-06T17:00:00Z"
+   },
+   "displayDateTime": {
+    "year": 2026,
+    "month": 10,
+    "day": 6,
+    "hours": 12,
+    "utcOffset": "-14400s"
+   },
+   "weatherCondition": {
+    "type": "LIGHT_RAIN_SHOWERS",
+    "description": {
+     "text": "Light rain showers"
+    }
+   },
+   "temperature": {
+    "degrees": 12.0,
+    "unit": "CELSIUS"
+   },
+   "precipitation": {
+    "probability": {
+     "percent": 60,
+     "type": "RAIN"
+    }
+   },
+   "wind": {
+    "speed": {
+     "value": 14
+    }
+   }
+  }
+ ],
+ "timeZone": {
+  "id": "America/Toronto"
+ }
+}

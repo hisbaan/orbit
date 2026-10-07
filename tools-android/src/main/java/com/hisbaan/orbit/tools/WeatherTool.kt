@@ -20,6 +20,8 @@ import com.hisbaan.orbit.agent.stringProperty
 import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.providers.ToolSpec
 import com.hisbaan.orbit.weather.OpenMeteo
+import com.hisbaan.orbit.weather.WeatherProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -34,8 +36,16 @@ import kotlinx.serialization.json.JsonObject
 import java.util.Locale
 import kotlin.coroutines.resume
 
-/** Current conditions and forecast for the phone's location or a named place (Open-Meteo). */
-class WeatherTool(context: Context, private val weather: OpenMeteo) : Tool {
+/**
+ * Current conditions and forecast for the phone's location or a named place, from the provider
+ * chosen in settings ([provider]); Open-Meteo ([geocoder]) finds places and stands in when the
+ * chosen provider fails.
+ */
+class WeatherTool(
+    context: Context,
+    private val geocoder: OpenMeteo,
+    private val provider: suspend () -> WeatherProvider,
+) : Tool {
     private val location = DeviceLocation(context)
 
     override val spec = ToolSpec(
@@ -58,7 +68,7 @@ class WeatherTool(context: Context, private val weather: OpenMeteo) : Tool {
         val longitude: Double
         val label: Deferred<String>
         if (name != null) {
-            val place = weather.geocode(name, Locale.getDefault().language)
+            val place = geocoder.geocode(name, Locale.getDefault().language)
                 ?: return@coroutineScope ToolOutcome("No place called '$name' was found. Ask the user where they mean.")
             latitude = place.latitude
             longitude = place.longitude
@@ -73,9 +83,20 @@ class WeatherTool(context: Context, private val weather: OpenMeteo) : Tool {
             // The place name only labels the answer: look it up while the forecast loads.
             label = async { "the user's location" + (location.locality(here)?.let { " (near $it)" } ?: "") }
         }
-        val forecast = weather.forecast(latitude, longitude, days, imperial)
-        val text = forecast.describe(label.await())
-        EventLog.log("weather", "Forecast in ${System.currentTimeMillis() - t0}ms")
+        val chosen = provider()
+        var note = ""
+        val forecast = try {
+            chosen.forecast(latitude, longitude, days, imperial)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (chosen === geocoder) throw e
+            EventLog.log("weather", "${chosen.name} failed ($e); using Open-Meteo")
+            note = "\n(${chosen.name} didn't answer, so this is from Open-Meteo.)"
+            geocoder.forecast(latitude, longitude, days, imperial)
+        }
+        val text = forecast.describe(label.await()) + note
+        EventLog.log("weather", "${if (note.isEmpty()) chosen.name else geocoder.name} in ${System.currentTimeMillis() - t0}ms")
         ToolOutcome(text)
     }
 

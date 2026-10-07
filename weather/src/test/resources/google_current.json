@@ -1,0 +1,40 @@
+{
+ "currentTime": "2026-10-06T15:30:12.025273178Z",
+ "timeZone": {
+  "id": "America/Toronto"
+ },
+ "isDaytime": true,
+ "weatherCondition": {
+  "iconBaseUri": "https://maps.gstatic.com/weather/v1/mostly_sunny",
+  "description": {
+   "text": "Mostly sunny",
+   "languageCode": "en"
+  },
+  "type": "MOSTLY_CLEAR"
+ },
+ "temperature": {
+  "degrees": 11.4,
+  "unit": "CELSIUS"
+ },
+ "feelsLikeTemperature": {
+  "degrees": 8.2,
+  "unit": "CELSIUS"
+ },
+ "relativeHumidity": 46,
+ "precipitation": {
+  "probability": {
+   "percent": 0,
+   "type": "RAIN"
+  }
+ },
+ "wind": {
+  "speed": {
+   "value": 11,
+   "unit": "KILOMETERS_PER_HOUR"
+  },
+  "gust": {
+   "value": 21,
+   "unit": "KILOMETERS_PER_HOUR"
+  }
+ }
+}

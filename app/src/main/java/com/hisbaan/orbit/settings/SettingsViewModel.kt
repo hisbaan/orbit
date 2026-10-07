@@ -26,6 +26,7 @@ import com.hisbaan.orbit.providers.ApiKeyCredential
 import com.hisbaan.orbit.providers.OpenAiChatCompletions
 import com.hisbaan.orbit.speech.isInstalled
 import com.hisbaan.orbit.tools.CalendarAccess
+import com.hisbaan.orbit.tools.DeviceLocation
 import com.hisbaan.orbit.tools.SavedPlaylist
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.roundToInt
 import java.util.UUID
 
 data class MusicApp(val label: String, val packageName: String)
@@ -59,6 +61,7 @@ data class SettingsUiState(
     /** Paired headsets; null without the nearby devices permission. */
     val headsets: List<Headset>? = null,
     val voices: List<VoiceOption> = emptyList(),
+    val weatherStatus: String? = null,
     /** Calendars new events can go to; null without calendar permission. */
     val calendars: List<CalendarAccess.Calendar>? = null,
 )
@@ -252,6 +255,34 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val region = voice.locale.displayCountry.ifBlank { voice.locale.displayLanguage }
         val code = voice.name.substringAfter("-x-", "").substringBeforeLast('-').uppercase().ifEmpty { "Standard" }
         return "$region · $code" + if (voice.isNetworkConnectionRequired) " (online)" else ""
+    }
+
+    // endregion
+
+    // region Weather
+
+    /** Fetches a forecast for the phone's location with the provider and key as currently entered. */
+    fun testWeather() {
+        val draft = _state.value.draft ?: return
+        val app = getApplication<OrbitApp>()
+        _state.update { it.copy(weatherStatus = "Testing…") }
+        viewModelScope.launch {
+            val provider = app.weatherProvider(draft)
+            val status = try {
+                val here = DeviceLocation(app).current()
+                val started = System.currentTimeMillis()
+                val forecast = provider.forecast(here?.latitude ?: 43.65, here?.longitude ?: -79.38, days = 1, imperial = false)
+                val ms = System.currentTimeMillis() - started
+                val now = forecast.current
+                "${provider.name} works (${ms} ms): ${now.temperature?.roundToInt()}${forecast.units.temperature}, ${now.condition.text}" +
+                    if (here == null) " (in Toronto; no location)" else "."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "${provider.name} failed: ${e.message}"
+            }
+            _state.update { it.copy(weatherStatus = status) }
+        }
     }
 
     // endregion
