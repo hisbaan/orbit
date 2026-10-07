@@ -5,6 +5,7 @@ import com.hisbaan.orbit.agent.ShowInfoCardTool
 import com.hisbaan.orbit.assist.UnlockActivity
 import com.hisbaan.orbit.assistant.Assistant
 import com.hisbaan.orbit.diagnostics.EventLog
+import com.hisbaan.orbit.homeassistant.HaCredential
 import com.hisbaan.orbit.homeassistant.HomeAssistant
 import com.hisbaan.orbit.homeassistant.HomeTools
 import com.hisbaan.orbit.settings.AppSettings
@@ -43,8 +44,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import java.util.Locale
 
@@ -65,21 +66,25 @@ class OrbitApp : Application() {
 
     val mediaSessions by lazy { MediaSessions(this) }
 
-    /** Settings that tools read synchronously, kept hot. */
-    private val musicPackage by lazy {
-        settings.settings.map { it.musicPackage }.stateIn(appScope, SharingStarted.Eagerly, null)
-    }
-    private val savedPlaylists by lazy {
-        settings.settings.map { it.savedPlaylists }.stateIn(appScope, SharingStarted.Eagerly, emptyList())
-    }
+    /**
+     * The latest settings, for tools that read them synchronously (tool lists and descriptions are
+     * built before each model call). Null until the first load; started in [onCreate], and each turn
+     * waits for it ([Assistant.settingsReady]) so a turn right after the process starts doesn't see
+     * blank settings: that hid the Home Assistant tools and the user's playlists.
+     */
+    private val loaded by lazy { settings.settings.stateIn(appScope, SharingStarted.Eagerly, null) }
 
-    /** The connected Home Assistant, rebuilt when its settings change (it caches access tokens). */
-    private val homeAssistant by lazy {
-        settings.settings
-            .map { it.homeAssistantUrl to it.homeAssistant }
-            .distinctUntilChanged()
-            .map { (url, credential) -> if (url.isBlank() || credential == null) null else HomeAssistant(httpClient, url, credential) }
-            .stateIn(appScope, SharingStarted.Eagerly, null)
+    private var homeAssistantCache: Triple<String, HaCredential?, HomeAssistant?>? = null
+
+    /** The connected Home Assistant, rebuilt only when its settings change (it caches access tokens). */
+    @Synchronized
+    private fun homeAssistant(): HomeAssistant? {
+        val s = loaded.value ?: return null
+        homeAssistantCache?.let { (url, credential, ha) -> if (url == s.homeAssistantUrl && credential == s.homeAssistant) return ha }
+        val credential = s.homeAssistant
+        val ha = if (s.homeAssistantUrl.isBlank() || credential == null) null else HomeAssistant(httpClient, s.homeAssistantUrl, credential)
+        homeAssistantCache = Triple(s.homeAssistantUrl, credential, ha)
+        return ha
     }
 
     private val openMeteo by lazy { OpenMeteo(httpClient) }
@@ -94,10 +99,11 @@ class OrbitApp : Application() {
 
     val tools by lazy {
         listOf(
-            MediaControlTool(this, mediaSessions) { musicPackage.value },
-            MediaInfoTool(this, mediaSessions) { musicPackage.value },
-            PlayMusicTool(this, mediaSessions, YouTubeMusicSearch(httpClient)) { musicPackage.value },
-            PlaySavedPlaylistTool(this, mediaSessions) { savedPlaylists.value },
+            // Read when used, not cached: a cached value is still empty right after the process starts.
+            MediaControlTool(this, mediaSessions) { settings.current().musicPackage },
+            MediaInfoTool(this, mediaSessions) { settings.current().musicPackage },
+            PlayMusicTool(this, mediaSessions, YouTubeMusicSearch(httpClient)) { settings.current().musicPackage },
+            PlaySavedPlaylistTool(this, mediaSessions) { loaded.value?.savedPlaylists.orEmpty() },
             NavigationTool(this),
             SetTimerTool(this),
             SetAlarmTool(this),
@@ -115,7 +121,7 @@ class OrbitApp : Application() {
                 CreateCalendarEventTool(calendar, defaultCalendarId = { settings.current().defaultCalendarId }),
                 DeleteCalendarEventTool(calendar),
             )
-        } + HomeTools({ homeAssistant.value }, { Locale.getDefault().language }).all
+        } + HomeTools(::homeAssistant, { Locale.getDefault().language }).all
     }
 
     /** Shared so Settings can list and preview the voices the assistant speaks with. */
@@ -124,6 +130,7 @@ class OrbitApp : Application() {
     val assistant by lazy {
         Assistant(context = this, settings = settings, httpClient = httpClient, tools = tools, tts = tts).apply {
             keyguardDismisser = { UnlockActivity.request(this@OrbitApp) }
+            settingsReady = { loaded.filterNotNull().first() }
         }
     }
 
@@ -131,5 +138,6 @@ class OrbitApp : Application() {
         super.onCreate()
         EventLog.addSink(LogcatSink)
         EventLog.addSink(FileSink(filesDir))
+        loaded // start loading settings now, not at the first turn
     }
 }

@@ -44,7 +44,7 @@ private const val NO_ACCESS =
 class MediaControlTool(
     context: Context,
     private val sessions: MediaSessions,
-    private val musicPackage: () -> String?,
+    private val musicPackage: suspend () -> String?,
 ) : Tool {
     override val confirms = true
 
@@ -168,7 +168,7 @@ class MediaControlTool(
 class MediaInfoTool(
     private val context: Context,
     private val sessions: MediaSessions,
-    private val musicPackage: () -> String?,
+    private val musicPackage: suspend () -> String?,
 ) : Tool {
     override val spec = ToolSpec(
         name = "media_info",
@@ -227,7 +227,7 @@ class PlayMusicTool(
     private val sessions: MediaSessions,
     private val youTubeMusic: YouTubeMusicSearch,
     /** Package of the preferred music app, or null for the system's choice. */
-    private val musicPackage: () -> String?,
+    private val musicPackage: suspend () -> String?,
 ) : Tool {
     override val confirms = true
 
