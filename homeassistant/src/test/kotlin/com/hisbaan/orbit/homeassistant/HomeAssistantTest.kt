@@ -245,6 +245,31 @@ class HomeAssistantTest {
     }
 
     @Test
+    fun `the safety check can't be dodged by spelling or data`() = runTest {
+        val calls = mutableListOf<Pair<String, JsonObject>>()
+        val tools = tools(haServer(calls))
+        // HA lowercases services; a generic service reaches the cover; data can't add targets.
+        val upper = tools.callService.invoke(args("""{"entities":"lock.front_door","service":"LOCK.Unlock"}"""))
+        val generic = tools.callService.invoke(args("""{"entities":"cover.garage","service":"homeassistant.toggle"}"""))
+        val widened = tools.callService.invoke(args("""{"entities":"light.kitchen","service":"turn_on","data":{"area_id":"garage"}}"""))
+        assertTrue(upper.result, upper.pending != null)
+        assertTrue(generic.result, generic.pending != null)
+        assertTrue(widened.result, widened.result.startsWith("Not done: 'area_id' doesn't go in data"))
+        assertTrue(calls.isEmpty())
+        upper.pending!!.run()
+        assertEquals("lock/unlock", calls.single().first)
+    }
+
+    @Test
+    fun `assist requests about doors wait for a yes`() = runTest {
+        val tools = tools(haServer())
+        val held = tools.command.invoke(args("""{"text":"open the garage"}"""))
+        assertTrue(held.result, held.result.startsWith("Not done yet"))
+        val ran = held.pending!!.run().result
+        assertTrue(ran, ran.startsWith("Home Assistant didn't do it"))
+    }
+
+    @Test
     fun `assist failures point the model at the other tools`() = runTest {
         val result = tools(haServer()).command.invoke(args("""{"text":"turn on the garden lights"}""")).result
         assertTrue(result, result.startsWith("Home Assistant didn't do it (no_valid_targets)"))

@@ -58,7 +58,18 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
         )
 
         override suspend fun run(ha: HomeAssistant, args: JsonObject): ToolOutcome {
-            val result = ha.converse(args.requireString("text"), language())
+            val text = args.requireString("text")
+            val perform: suspend () -> ToolOutcome = { converse(ha, text) }
+            // Assist does whatever the words say, so anything about locks or doors waits for a yes.
+            if (!HaSafety.namesEntryway(text)) return perform()
+            return ToolOutcome(
+                "Not done yet: '$text' may unlock or open something, so it needs the user's confirmation. Ask them.",
+                pending = PendingAction("ask Home Assistant to '$text'") { reportingErrors(perform) },
+            )
+        }
+
+        private suspend fun converse(ha: HomeAssistant, text: String): ToolOutcome {
+            val result = ha.converse(text, language())
             return ToolOutcome(
                 when (result.responseType) {
                     "error" -> "Home Assistant didn't do it (${result.errorCode ?: "error"}): ${result.speech}. " +
@@ -113,12 +124,17 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
         )
 
         override suspend fun run(ha: HomeAssistant, args: JsonObject): ToolOutcome {
-            val requested = args.requireString("service")
+            // HA lowercases these itself, so the safety check must see what HA will run.
+            val requested = args.requireString("service").trim().lowercase()
             val names = args.string("entities")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
             val area = args.string("area")
             val explicitDomain = requested.substringBefore('.', "").ifEmpty { null }
             val service = requested.substringAfter('.')
             val data = (args["data"] as? JsonObject) ?: JsonObject(emptyMap())
+            // HA would add these to the targets, past the ones checked below.
+            HaSafety.TARGET_KEYS.firstOrNull { it in data }?.let {
+                return ToolOutcome("Not done: '$it' doesn't go in data. Name the targets with entities or area.")
+            }
 
             val needAreas = area != null || names.any { '.' !in it }
             val resolution = coroutineScope {
@@ -149,7 +165,7 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
                 ToolOutcome("Called $what. Now:\n" + lines.joinToString("\n") + skippedNote)
             }
 
-            val sensitive = targets.filter { isSensitive(explicitDomain ?: it.domain, service, it) }
+            val sensitive = targets.filter { HaSafety.needsConfirmation(explicitDomain ?: it.domain, service, it) }
             if (sensitive.isEmpty()) return perform()
             val what = "${service.replace('_', ' ')} ${sensitive.joinToString { it.name }}"
             return ToolOutcome(
@@ -185,13 +201,5 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
         const val LIMIT = 60
         const val SETTLE_MS = 3000
         const val POLL_MS = 250
-
-        fun isSensitive(domain: String, service: String, entity: HaEntity): Boolean = when {
-            domain == "lock" && service in setOf("unlock", "open") -> true
-            domain == "alarm_control_panel" && service.startsWith("alarm_disarm") -> true
-            domain == "cover" && service in setOf("open_cover", "toggle", "set_cover_position") &&
-                entity.attr("device_class") in setOf("garage", "gate", "door") -> true
-            else -> false
-        }
     }
 }
