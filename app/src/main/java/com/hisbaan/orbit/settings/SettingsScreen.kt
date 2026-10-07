@@ -35,6 +35,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.hisbaan.orbit.audio.EarconStyle
 import com.hisbaan.orbit.homeassistant.HaCredential
+import com.hisbaan.orbit.tools.CalendarAccess
 
 @Composable
 fun SettingsScreen(
@@ -191,6 +192,10 @@ fun SettingsScreen(
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         }
 
+        Section("Calendar") {
+            CalendarSettings(draft, state.calendars, vm)
+        }
+
         Section("Voice") {
             VoiceSettings(draft, state.voices, vm)
         }
@@ -223,6 +228,42 @@ private fun Section(title: String, content: @Composable () -> Unit) {
             content()
         }
     }
+}
+
+@Composable
+private fun CalendarSettings(draft: AppSettings, calendars: List<CalendarAccess.Calendar>?, vm: SettingsViewModel) {
+    if (calendars == null) {
+        Text("Grant the calendar permission to let Orbit read and add events.", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+    var open by remember { mutableStateOf(false) }
+    val chosen = calendars.firstOrNull { it.id == draft.defaultCalendarId }
+    val fallback = CalendarAccess.pick(calendars, null)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("New events go to", modifier = Modifier.weight(1f))
+        Box {
+            TextButton(onClick = {
+                vm.loadCalendars()
+                open = true
+            }) { Text(chosen?.name ?: fallback?.let { "${it.name} (automatic)" } ?: "No writable calendar") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                DropdownMenuItem(text = { Text("Automatic (a primary calendar)") }, onClick = {
+                    open = false
+                    vm.setDefaultCalendar(null)
+                })
+                calendars.forEach { calendar ->
+                    DropdownMenuItem(
+                        text = { Text(if (calendar.account != calendar.name) "${calendar.name} (${calendar.account})" else calendar.name) },
+                        onClick = {
+                            open = false
+                            vm.setDefaultCalendar(calendar.id)
+                        },
+                    )
+                }
+            }
+        }
+    }
+    Text("Asking for another calendar by name (\"add it to my Work calendar\") still works.", style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

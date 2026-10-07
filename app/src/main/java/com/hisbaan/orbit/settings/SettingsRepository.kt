@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -38,6 +39,8 @@ data class AppSettings(
     val defaultSounds: EarconStyle = EarconStyle.GENTLE,
     /** TTS voice name (e.g. `en-us-x-tpd-local`); null uses the engine's default. */
     val ttsVoice: String? = null,
+    /** Calendar provider id new events go to; null picks a primary calendar. */
+    val defaultCalendarId: Long? = null,
 ) {
     val isProviderConfigured: Boolean get() = baseUrl.isNotBlank() && model.isNotBlank()
 
@@ -66,6 +69,7 @@ class SettingsRepository(context: Context) {
         val headsetSounds = stringSetPreferencesKey("headset_sounds")
         val defaultSounds = stringPreferencesKey("default_sounds")
         val ttsVoice = stringPreferencesKey("tts_voice")
+        val defaultCalendarId = longPreferencesKey("default_calendar_id")
 
         /** Before silent existed: the addresses that were alerting. Read once, then replaced by [headsetSounds]. */
         val legacyAlertingDevices = stringSetPreferencesKey("alerting_sound_devices")
@@ -89,6 +93,7 @@ class SettingsRepository(context: Context) {
             prefs[Keys.headsetSounds] = new.headsetSounds.map { (address, style) -> "$address=${style.name}" }.toSet()
             prefs[Keys.defaultSounds] = new.defaultSounds.name
             if (new.ttsVoice != null) prefs[Keys.ttsVoice] = new.ttsVoice else prefs.remove(Keys.ttsVoice)
+            if (new.defaultCalendarId != null) prefs[Keys.defaultCalendarId] = new.defaultCalendarId else prefs.remove(Keys.defaultCalendarId)
             prefs.remove(Keys.legacyAlertingDevices)
             if (new.homeAssistant != old.homeAssistant) {
                 val encoded = encodeCredential(new.homeAssistant)
@@ -114,6 +119,7 @@ class SettingsRepository(context: Context) {
             ?: prefs[Keys.legacyAlertingDevices].orEmpty().associateWith { EarconStyle.ALERTING },
         defaultSounds = prefs[Keys.defaultSounds]?.let { name -> EarconStyle.entries.firstOrNull { it.name == name } } ?: EarconStyle.GENTLE,
         ttsVoice = prefs[Keys.ttsVoice],
+        defaultCalendarId = prefs[Keys.defaultCalendarId],
     )
 
     private fun decodeHeadsetSounds(entries: Set<String>): Map<String, EarconStyle> = entries.mapNotNull { entry ->

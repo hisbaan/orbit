@@ -25,6 +25,7 @@ import com.hisbaan.orbit.homeassistant.HomeAssistant
 import com.hisbaan.orbit.providers.ApiKeyCredential
 import com.hisbaan.orbit.providers.OpenAiChatCompletions
 import com.hisbaan.orbit.speech.isInstalled
+import com.hisbaan.orbit.tools.CalendarAccess
 import com.hisbaan.orbit.tools.SavedPlaylist
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -58,6 +59,8 @@ data class SettingsUiState(
     /** Paired headsets; null without the nearby devices permission. */
     val headsets: List<Headset>? = null,
     val voices: List<VoiceOption> = emptyList(),
+    /** Calendars new events can go to; null without calendar permission. */
+    val calendars: List<CalendarAccess.Calendar>? = null,
 )
 
 data class HaSignIn(val baseUrl: String, val authorizeUrl: String, val state: String)
@@ -75,6 +78,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { _state.update { it.copy(draft = repo.current()) } }
         loadHeadsets()
         loadVoices()
+        loadCalendars()
     }
 
     /** Edits that wait for an explicit save (text fields). */
@@ -249,6 +253,20 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val code = voice.name.substringAfter("-x-", "").substringBeforeLast('-').uppercase().ifEmpty { "Standard" }
         return "$region · $code" + if (voice.isNetworkConnectionRequired) " (online)" else ""
     }
+
+    // endregion
+
+    // region Calendar
+
+    fun loadCalendars() {
+        viewModelScope.launch {
+            val access = CalendarAccess(getApplication())
+            val calendars = if (access.canRead) access.calendars().filter { it.writable }.sortedBy { it.name.lowercase() } else null
+            _state.update { it.copy(calendars = calendars) }
+        }
+    }
+
+    fun setDefaultCalendar(id: Long?) = editAndSave { it.copy(defaultCalendarId = id) }
 
     // endregion
 

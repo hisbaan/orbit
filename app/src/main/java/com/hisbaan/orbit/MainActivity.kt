@@ -211,6 +211,8 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.READ_CONTACTS to "contacts",
             Manifest.permission.CALL_PHONE to "phone calls",
             Manifest.permission.ACCESS_COARSE_LOCATION to "location (weather)",
+            Manifest.permission.READ_CALENDAR to "calendar",
+            Manifest.permission.WRITE_CALENDAR to "calendar",
             // Android 17 gates connections to LAN addresses (Home Assistant, local model servers).
             (Manifest.permission.ACCESS_LOCAL_NETWORK to "local network").takeIf { Build.VERSION.SDK_INT >= 37 },
         )

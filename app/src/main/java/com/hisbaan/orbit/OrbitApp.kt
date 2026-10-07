@@ -8,8 +8,12 @@ import com.hisbaan.orbit.homeassistant.HomeAssistant
 import com.hisbaan.orbit.homeassistant.HomeTools
 import com.hisbaan.orbit.settings.SettingsRepository
 import com.hisbaan.orbit.speech.TtsSpeaker
+import com.hisbaan.orbit.tools.CalendarAccess
+import com.hisbaan.orbit.tools.CalendarEventsTool
 import com.hisbaan.orbit.tools.CallContactTool
+import com.hisbaan.orbit.tools.CreateCalendarEventTool
 import com.hisbaan.orbit.tools.CurrentTimeTool
+import com.hisbaan.orbit.tools.DeleteCalendarEventTool
 import com.hisbaan.orbit.tools.MediaControlTool
 import com.hisbaan.orbit.tools.MediaInfoTool
 import com.hisbaan.orbit.tools.MediaSessions
@@ -83,7 +87,13 @@ class OrbitApp : Application() {
             NotificationsTool(this),
             CallContactTool(this),
             OpenAppTool(this),
-        ) + HomeTools({ homeAssistant.value }, { Locale.getDefault().language }).all
+        ) + CalendarAccess(this).let { calendar ->
+            listOf(
+                CalendarEventsTool(calendar),
+                CreateCalendarEventTool(calendar, defaultCalendarId = { settings.current().defaultCalendarId }),
+                DeleteCalendarEventTool(calendar),
+            )
+        } + HomeTools({ homeAssistant.value }, { Locale.getDefault().language }).all
     }
 
     /** Shared so Settings can list and preview the voices the assistant speaks with. */

@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <!-- Weather for where the phone is; coarse is enough. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Calendar tools: list, create and delete events. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
 
     <queries>
         <!-- OpenAppTool lists launchable apps. -->
