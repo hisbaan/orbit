@@ -55,7 +55,7 @@ class DebugToolReceiver : BroadcastReceiver() {
         app.appScope.launch {
             try {
                 if (name == "playFromSearch") {
-                    rawPlayFromSearch(app, intent.getStringExtra("query").orEmpty(), intent.getStringExtra("focus"))
+                    rawPlayFromSearch(app, intent.getStringExtra("query").orEmpty(), intent.getStringExtra("focus"), intent.getStringExtra("pkg"))
                 } else if (name == "browse") {
                     probeBrowser(app, intent.getStringExtra("pkg") ?: "com.google.android.apps.youtube.music")
                 } else {
@@ -110,9 +110,10 @@ class DebugToolReceiver : BroadcastReceiver() {
         }
     }
 
-    private suspend fun rawPlayFromSearch(app: OrbitApp, query: String, focus: String?) {
-        val pkg = app.settings.current().musicPackage
-        val controller = app.mediaSessions.target(pkg) ?: return EventLog.log("debug", "No session for $pkg")
+    private suspend fun rawPlayFromSearch(app: OrbitApp, query: String, focus: String?, target: String?) {
+        val pkg = target ?: app.settings.current().musicPackage
+        val controller = app.mediaSessions.controllers().firstOrNull { it.packageName == pkg } ?: app.mediaSessions.target(pkg)
+            ?: return EventLog.log("debug", "No session for $pkg")
         val extras = Bundle().apply { focus?.let { putString(MediaStore.EXTRA_MEDIA_FOCUS, it) } }
         EventLog.log("debug", "raw playFromSearch('$query', focus=$focus) -> ${controller.packageName}")
         controller.transportControls.playFromSearch(query, extras)

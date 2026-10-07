@@ -4,6 +4,7 @@ import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaController
@@ -241,10 +242,11 @@ class PlayMusicTool(
 
     override val spec = ToolSpec(
         name = "play_music",
-        description = "Search for and play music in the user's music app. Only use this when the user " +
-            "explicitly asks to play or listen to something. Starts after you finish speaking.",
+        description = "Search for and play music, in the app the user named or else their music app. Only use this " +
+            "when the user explicitly asks to play or listen to something. Starts after you finish speaking.",
         parameters = objectSchema(
             listOf("query"),
+            "app" to stringProperty("The app to play in, only if the user named one, e.g. 'Spotify'"),
             "query" to stringProperty("What to play, as the user would type it into a music search, e.g. 'Bohemian Rhapsody Queen'"),
             "kind" to stringProperty("What the query names, if clear", listOf("any") + focusTypes.keys),
             "artist" to stringProperty("Artist name, if known"),
@@ -261,10 +263,18 @@ class PlayMusicTool(
             args.string("album")?.let { putString(MediaStore.EXTRA_MEDIA_ALBUM, it) }
             args.string("title")?.let { putString(MediaStore.EXTRA_MEDIA_TITLE, it) }
         }
-        val pkg = musicPackage()
-        if ((pkg ?: sessions.target()?.packageName) == YOUTUBE_MUSIC) {
+        // The app the user named, else their chosen one, else what's playing, else the system's default.
+        val named = args.string("app")
+        val pkg = if (named != null) {
+            musicApps().let { apps -> matchApp(apps, named) ?: return ToolOutcome("No music app called '$named'. Installed: ${apps.joinToString { it.first }}.") }
+        } else {
+            musicPackage() ?: sessions.target()?.packageName ?: defaultMusicApp()
+        }
+        sessions.log("play_music '$query' -> ${pkg ?: "no app"}${named?.let { " (asked for $it)" } ?: ""}")
+        if (pkg == YOUTUBE_MUSIC) {
             playOnYouTubeMusic(query, args.string("kind"), args.string("artist"))?.let { return it }
         }
+        if (pkg == SPOTIFY) return spotifySearch(query, extras)
         val session = sessions.target(pkg)
             ?.takeIf { (pkg == null || it.packageName == pkg) && it.supports(PlaybackState.ACTION_PLAY_FROM_SEARCH) }
         val result = "Queued: '$query' will start playing after you finish speaking."
@@ -302,6 +312,38 @@ class PlayMusicTool(
         )
     }
 
+    /**
+     * Spotify only searches when other apps ask it to play something: it ignores play-from-search
+     * through its media session, refuses our media browser connection, and its Web API needs a
+     * Premium developer account. Opening a track link would play, but finding the track needs that
+     * API. So open its search and tell the model it's a search, not playback.
+     */
+    private fun spotifySearch(query: String, extras: Bundle): ToolOutcome {
+        val intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+            .setPackage(SPOTIFY)
+            .putExtra(SearchManager.QUERY, query)
+            .putExtras(extras)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return ToolOutcome(
+            "Spotify will open its search results for '$query' after you finish speaking, but it doesn't let other " +
+                "apps start a song, so the user has to tap it. Say that briefly.",
+            AfterTurnAction("search Spotify for '$query'", needsUnlock = true) { context.startActivity(intent) },
+        )
+    }
+
+    /** Installed apps that take play-from-search requests, as (label, package). */
+    private fun musicApps(): List<Pair<String, String>> {
+        val pm = context.packageManager
+        return pm.queryIntentActivities(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH), 0)
+            .map { it.loadLabel(pm).toString() to it.activityInfo.packageName }
+            .distinctBy { it.second }
+    }
+
+    /** The app handling play-from-search by default, or null if the user hasn't picked one. */
+    private fun defaultMusicApp(): String? = context.packageManager
+        .resolveActivity(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH), PackageManager.MATCH_DEFAULT_ONLY)
+        ?.activityInfo?.packageName?.takeIf { it != "android" }
+
     /** Searches YouTube Music and queues the best match. Null means "use the generic path". */
     private suspend fun playOnYouTubeMusic(query: String, kind: String?, artist: String?): ToolOutcome? {
         val locale = Locale.getDefault()
@@ -321,6 +363,18 @@ class PlayMusicTool(
             AfterTurnAction("play ${pick.describe()}", needsUnlock = true) { openInYouTubeMusic(context, pick.playUrl!!) },
             done = true,
         )
+    }
+
+    companion object {
+        private const val SPOTIFY = "com.spotify.music"
+
+        /** The app [said] names: an exact label first ("YouTube Music" over "YouTube"), then a partial one. */
+        fun matchApp(apps: List<Pair<String, String>>, said: String): String? {
+            val wanted = said.trim()
+            return apps.firstOrNull { it.first.equals(wanted, ignoreCase = true) }?.second
+                ?: apps.filter { it.first.contains(wanted, ignoreCase = true) || wanted.contains(it.first, ignoreCase = true) }
+                    .maxByOrNull { it.first.length }?.second
+        }
     }
 }
 
