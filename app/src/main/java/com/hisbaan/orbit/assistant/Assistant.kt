@@ -178,40 +178,49 @@ class Assistant(
         step("Start: trigger=$source device=${device?.address ?: "?"}")
         _state.value = AssistantState(phase = Phase.STARTING)
 
-        val config = settings.current()
-        tts.voiceName = config.ttsVoice
-        focus.acquire(FocusMode.TRANSIENT_EXCLUSIVE)
-        val route = router.acquire(RouteStrategy.AUTO, setCommunicationMode = false, preferredDevice = device)
-        val usage = if (route.isBluetooth) PlaybackUsage.VOICE_COMMUNICATION else PlaybackUsage.ASSISTANT
-        step("Route: ${route.summary()}")
-        val sounds = earconStyle(config, route.hfpDevice ?: device)
-        step("Listening sounds: ${sounds.label}")
-
         // One capture stream for the whole turn keeps the SCO link up. Chunks go to the
         // recognizer only while it's listening.
         val stopCapture = AtomicBoolean(false)
         val listener = AtomicReference<Channel<ShortArray>?>(null)
-        val capture = scope.launch {
-            MicCapture.record(CaptureSource.VOICE_RECOGNITION, null, stopCapture) { samples, count, _, _ ->
-                listener.get()?.trySend(samples.copyOf(count))
-            }
-        }
-        val linkWatch = scope.launch(Dispatchers.IO) { watchHfpLink(route, step) }
+        // Set up one by one inside the try, so a turn cancelled while starting (a second press,
+        // the user typing) undoes exactly what it got to: focus, route, capture.
+        var route: AudioRouter.Route? = null
+        var capture: Job? = null
+        var linkWatch: Job? = null
 
         val afterTurn = mutableListOf<AfterTurnAction>()
         try {
-            router.awaitHfpAudio(route, timeoutMs = 1_500)?.let { step("HFP link up after ${it}ms") }
+            val config = settings.current()
+            tts.voiceName = config.ttsVoice
+            focus.acquire(FocusMode.TRANSIENT_EXCLUSIVE)
+            val acquired = router.acquire(RouteStrategy.AUTO, setCommunicationMode = false, preferredDevice = device)
+            route = acquired
+            val usage = if (acquired.isBluetooth) PlaybackUsage.VOICE_COMMUNICATION else PlaybackUsage.ASSISTANT
+            step("Route: ${acquired.summary()}")
+            val sounds = earconStyle(config, acquired.hfpDevice ?: device)
+            step("Listening sounds: ${sounds.label}")
+
+            capture = scope.launch {
+                MicCapture.record(CaptureSource.VOICE_RECOGNITION, null, stopCapture) { samples, count, _, _ ->
+                    listener.get()?.trySend(samples.copyOf(count))
+                }
+            }
+            linkWatch = scope.launch(Dispatchers.IO) { watchHfpLink(acquired, step) }
+
+            router.awaitHfpAudio(acquired, timeoutMs = 1_500)?.let { step("HFP link up after ${it}ms") }
             converse(config, usage, sounds, listener, typed, afterTurn, step)
         } finally {
             withContext(NonCancellable) {
                 interruptible = false
                 _state.update { it.copy(phase = Phase.FINISHING) }
-                linkWatch.cancel()
+                linkWatch?.cancel()
                 listener.getAndSet(null)?.close()
                 stopCapture.set(true)
-                capture.join()
-                router.release(route)
-                router.awaitHfpAudioDown(route, timeoutMs = 3_000)?.let { step("HFP link down after ${it}ms") }
+                capture?.join()
+                route?.let { r ->
+                    router.release(r)
+                    router.awaitHfpAudioDown(r, timeoutMs = 3_000)?.let { step("HFP link down after ${it}ms") }
+                }
                 focus.release()
                 _state.update { it.copy(phase = Phase.IDLE) }
                 step("Turn finished")

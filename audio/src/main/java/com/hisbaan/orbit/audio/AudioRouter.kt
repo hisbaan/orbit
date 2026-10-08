@@ -66,6 +66,10 @@ class AudioRouter(
     /**
      * [preferredDevice] is the headset that triggered us (from the VOICE_COMMAND intent), if
      * known; otherwise the first connected HFP device is used.
+     *
+     * Cancellation-safe: cancelled (or failing) after the route was requested, while waiting for
+     * it to come up, it releases what it set up before rethrowing, so a caller that never got the
+     * [Route] has nothing to undo.
      */
     suspend fun acquire(
         strategy: RouteStrategy,
@@ -113,7 +117,13 @@ class AudioRouter(
             RouteStrategy.LEGACY_SCO -> startLegacySco()
         }
 
-        val routeReadyMs = if (used == RouteStrategy.NONE) null else awaitRoute(t0)
+        val routeReadyMs = try {
+            if (used == RouteStrategy.NONE) null else awaitRoute(t0)
+        } catch (e: Throwable) {
+            EventLog.log("route", "Acquire interrupted (${e::class.simpleName}); releasing")
+            release(Route(used, headset, hfpDevice, communicationDevice, previousMode, changeMode, routeReadyMs = null))
+            throw e
+        }
         return Route(used, headset, hfpDevice, communicationDevice, previousMode, changeMode, routeReadyMs)
             .also { EventLog.log("route", "Acquired: ${it.summary()}") }
     }
