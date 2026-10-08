@@ -91,6 +91,22 @@ class AgentTest {
     }
 
     @Test
+    fun `a confirmation reply is remembered for the follow-up`() = runTest {
+        val transport = FakeTransport(
+            calls(ToolCall("1", "navigate", """{"destination":"home","confirmation":"Heading home."}""")),
+            text("About 20 minutes."),
+        )
+        val agent = Agent(listOf(navigateTool()), systemPrompt = { "sys" })
+
+        agent.respond("take me home", transport, "m")
+        agent.respond("how long will it take?", transport, "m")
+
+        val messages = transport.requests[1].messages
+        assertEquals(ChatMessage.Assistant("Heading home."), messages[messages.size - 2])
+        assertEquals(ChatMessage.User("how long will it take?"), messages.last())
+    }
+
+    @Test
     fun `parallel calls share one confirmation`() = runTest {
         val media = RecordingTool("media_control", confirms = true) { ToolOutcome("Paused.", done = true) }
         val transport = FakeTransport(

@@ -22,8 +22,6 @@ import com.hisbaan.orbit.homeassistant.HaAuth
 import com.hisbaan.orbit.homeassistant.HaCredential
 import com.hisbaan.orbit.homeassistant.HaException
 import com.hisbaan.orbit.homeassistant.HomeAssistant
-import com.hisbaan.orbit.providers.ApiKeyCredential
-import com.hisbaan.orbit.providers.OpenAiChatCompletions
 import com.hisbaan.orbit.speech.isInstalled
 import com.hisbaan.orbit.tools.CalendarAccess
 import com.hisbaan.orbit.tools.DeviceLocation
@@ -118,7 +116,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(status = "Loading models…") }
         viewModelScope.launch {
             try {
-                val models = OpenAiChatCompletions(draft.baseUrl, ApiKeyCredential(draft.apiKey), httpClient).listModels()
+                val models = draft.chatTransport(httpClient).listModels()
                 _state.update { it.copy(models = models, status = "${models.size} models") }
             } catch (e: CancellationException) {
                 throw e

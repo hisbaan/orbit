@@ -15,16 +15,15 @@ import io.ktor.http.isSuccess
 import io.ktor.utils.io.readLine
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.int
-import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
@@ -64,9 +63,7 @@ class OpenAiChatCompletions(
         }
         if (!response.status.isSuccess()) throw errorFrom(response)
         val root = json.parseToJsonElement(response.bodyAsText()).jsonObject
-        return root["data"]?.jsonArray.orEmpty()
-            .mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.contentOrNull }
-            .sorted()
+        return root.array("data").mapNotNull { (it as? JsonObject)?.string("id") }.sorted()
     }
 
     private suspend fun decodeStream(response: HttpResponse, onTextDelta: (String) -> Unit): ChatResponse {
@@ -81,28 +78,28 @@ class OpenAiChatCompletions(
             if (data == "[DONE]") break
             if (data.isEmpty()) continue
             val chunk = json.parseToJsonElement(data).jsonObject
-            chunk["error"]?.let { throw ProviderException(errorMessage(it.jsonObject)) }
-            val choice = chunk["choices"]?.jsonArray?.firstOrNull()?.jsonObject ?: continue
-            choice["finish_reason"]?.jsonPrimitive?.contentOrNull?.let { finishReason = it }
-            val delta = choice["delta"]?.jsonObject ?: continue
-            delta["content"]?.jsonPrimitive?.contentOrNull?.let {
+            chunk.obj("error")?.let { throw ProviderException(errorMessage(it)) }
+            val choice = chunk.array("choices").firstOrNull() as? JsonObject ?: continue
+            choice.string("finish_reason")?.let { finishReason = it }
+            val delta = choice.obj("delta") ?: continue
+            delta.string("content")?.let {
                 text.append(it)
                 onTextDelta(it)
             }
-            delta["tool_calls"]?.jsonArray?.forEach { element ->
-                val call = element.jsonObject
-                val index = call["index"]?.jsonPrimitive?.int ?: 0
+            delta.array("tool_calls").filterIsInstance<JsonObject>().forEach { call ->
+                val index = (call["index"] as? JsonPrimitive)?.intOrNull ?: 0
                 val partial = calls.getOrPut(index) { PartialCall() }
-                call["id"]?.jsonPrimitive?.contentOrNull?.let { partial.id = it }
-                call["function"]?.jsonObject?.let { fn ->
-                    fn["name"]?.jsonPrimitive?.contentOrNull?.let { partial.name.append(it) }
-                    fn["arguments"]?.jsonPrimitive?.contentOrNull?.let { partial.arguments.append(it) }
+                call.string("id")?.let { partial.id = it }
+                call.obj("function")?.let { fn ->
+                    fn.string("name")?.let { partial.name.append(it) }
+                    fn.string("arguments")?.let { partial.arguments.append(it) }
                 }
             }
         }
         return ChatResponse(
             text = text.toString(),
-            toolCalls = calls.entries.map { (index, p) ->
+            // An entry that never got a name isn't a call (some servers send empty placeholders).
+            toolCalls = calls.entries.filter { it.value.name.isNotEmpty() }.map { (index, p) ->
                 ToolCall(id = p.id ?: "call_$index", name = p.name.toString(), argumentsJson = p.arguments.toString())
             },
             finishReason = finishReason,
@@ -110,21 +107,20 @@ class OpenAiChatCompletions(
     }
 
     private fun decodeFull(root: JsonObject, onTextDelta: (String) -> Unit): ChatResponse {
-        val choice = root["choices"]?.jsonArray?.firstOrNull()?.jsonObject
+        val choice = root.array("choices").firstOrNull() as? JsonObject
             ?: throw ProviderException("Response has no choices")
-        val message = choice["message"]?.jsonObject
-        val text = message?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
+        val message = choice.obj("message")
+        val text = message?.string("content").orEmpty()
         if (text.isNotEmpty()) onTextDelta(text)
-        val calls = message?.get("tool_calls")?.jsonArray.orEmpty().mapIndexed { index, element ->
-            val call = element.jsonObject
-            val fn = call["function"]?.jsonObject
+        val calls = message?.array("tool_calls").orEmpty().filterIsInstance<JsonObject>().mapIndexed { index, call ->
+            val fn = call.obj("function")
             ToolCall(
-                id = call["id"]?.jsonPrimitive?.contentOrNull ?: "call_$index",
-                name = fn?.get("name")?.jsonPrimitive?.contentOrNull.orEmpty(),
-                argumentsJson = fn?.get("arguments")?.jsonPrimitive?.contentOrNull.orEmpty(),
+                id = call.string("id") ?: "call_$index",
+                name = fn?.string("name").orEmpty(),
+                argumentsJson = fn?.string("arguments").orEmpty(),
             )
         }
-        return ChatResponse(text, calls, choice["finish_reason"]?.jsonPrimitive?.contentOrNull)
+        return ChatResponse(text, calls, choice.string("finish_reason"))
     }
 
     private suspend fun errorFrom(response: HttpResponse): ProviderException {
@@ -135,8 +131,7 @@ class OpenAiChatCompletions(
         return ProviderException("HTTP ${response.status.value}: $message", response.status.value)
     }
 
-    private fun errorMessage(error: JsonObject): String =
-        error["message"]?.jsonPrimitive?.contentOrNull ?: error.toString()
+    private fun errorMessage(error: JsonObject): String = error.string("message") ?: error.toString()
 
     private class PartialCall {
         var id: String? = null
@@ -146,6 +141,12 @@ class OpenAiChatCompletions(
 
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
+
+        // Field readers that treat JSON null (which some compatible servers send, e.g.
+        // "tool_calls": null) or a value of another type as absent, instead of throwing.
+        private fun JsonObject.obj(key: String) = get(key) as? JsonObject
+        private fun JsonObject.array(key: String): List<JsonElement> = (get(key) as? JsonArray).orEmpty()
+        private fun JsonObject.string(key: String) = (get(key) as? JsonPrimitive)?.contentOrNull
 
         internal fun encodeRequest(request: ChatRequest, reasoningEffort: String? = null): JsonObject = buildJsonObject {
             put("model", request.model)

@@ -82,6 +82,28 @@ class OpenAiChatCompletionsTest {
     }
 
     @Test
+    fun `treats null fields as absent`() = runTest {
+        // Shapes some compatible servers send: explicit nulls where OpenAI leaves fields out.
+        val sse = """
+            data: {"choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":null}}],"error":null}
+            data: {"choices":[{"index":0,"delta":null}]}
+            data: {"choices":[{"index":0,"delta":{"content":"Hi.","tool_calls":[{"index":null,"id":null,"function":null}]}}]}
+            data: {"choices":null}
+            data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+            data: [DONE]
+        """.trimIndent()
+        val streamed = transport(contentType = "text/event-stream", body = sse).complete(request)
+        assertEquals("Hi.", streamed.text)
+        assertEquals("stop", streamed.finishReason)
+        assertTrue(streamed.toolCalls.isEmpty())
+
+        val body = """{"choices":[{"message":{"role":"assistant","content":"Done.","tool_calls":null},"finish_reason":null}]}"""
+        val full = transport(contentType = "application/json", body = body).complete(request)
+        assertEquals("Done.", full.text)
+        assertTrue(full.toolCalls.isEmpty())
+    }
+
+    @Test
     fun `surfaces API error messages`() = runTest {
         val body = """{"error":{"message":"Incorrect API key provided","type":"invalid_request_error"}}"""
         val error = runCatching {

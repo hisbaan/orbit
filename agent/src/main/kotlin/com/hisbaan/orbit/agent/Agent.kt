@@ -153,6 +153,9 @@ class Agent(
                 // the calls wins over the confirmation arguments.
                 if (allDone && (written.isNotEmpty() || response.text.isNotBlank())) {
                     val reply = response.text.trim().ifEmpty { written.joinToString(" ").also(onText) }
+                    // Text the model wrote is already in history with its calls; a reply made of
+                    // confirmations isn't, and a follow-up needs to know what was said.
+                    if (response.text.isBlank()) history += ChatMessage.Assistant(reply)
                     EventLog.log("agent", "Step ${step + 1}: actions confirmed; no follow-up call")
                     return AgentResult(reply, afterTurn, calls)
                 }

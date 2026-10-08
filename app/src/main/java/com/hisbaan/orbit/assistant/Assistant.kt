@@ -25,11 +25,11 @@ import com.hisbaan.orbit.audio.PcmPlayer
 import com.hisbaan.orbit.audio.PlaybackUsage
 import com.hisbaan.orbit.audio.RouteStrategy
 import com.hisbaan.orbit.diagnostics.EventLog
-import com.hisbaan.orbit.providers.ApiKeyCredential
-import com.hisbaan.orbit.providers.OpenAiChatCompletions
+import com.hisbaan.orbit.providers.ChatTransport
 import com.hisbaan.orbit.providers.ProviderException
 import com.hisbaan.orbit.settings.AppSettings
 import com.hisbaan.orbit.settings.SettingsRepository
+import com.hisbaan.orbit.settings.chatTransport
 import com.hisbaan.orbit.speech.OnDeviceStt
 import com.hisbaan.orbit.speech.TtsSpeaker
 import io.ktor.client.HttpClient
@@ -254,7 +254,7 @@ class Assistant(
             if (!config.isProviderConfigured) {
                 return speak("Orbit isn't set up yet. Add a provider and model in Orbit's settings.", usage = null)
             }
-            thinkAndSpeak(text, transport(config), config.model, usage = null, afterTurn, step)
+            thinkAndSpeak(text, config.chatTransport(httpClient), config.model, usage = null, afterTurn, step)
         } finally {
             _state.update { it.copy(phase = Phase.IDLE) }
             step("Turn finished")
@@ -262,9 +262,6 @@ class Assistant(
         if (afterTurn.isNotEmpty()) _dismissRequests.tryEmit(Unit)
         runAfterTurn(afterTurn)
     }
-
-    private fun transport(config: AppSettings) =
-        OpenAiChatCompletions(config.baseUrl, ApiKeyCredential(config.apiKey), httpClient, config.reasoningEffort)
 
     /**
      * The exchanges of one turn: listen → think and speak. Orbit listens again, without a
@@ -287,7 +284,7 @@ class Assistant(
         if (!config.isProviderConfigured) {
             return speak("Orbit isn't set up yet. Add a provider and model in Orbit's settings.", usage)
         }
-        val transport = transport(config)
+        val transport = config.chatTransport(httpClient)
 
         var followUp = false
         repeat(MAX_EXCHANGES) { exchange ->
@@ -342,7 +339,7 @@ class Assistant(
      */
     private suspend fun thinkAndSpeak(
         text: String,
-        transport: OpenAiChatCompletions,
+        transport: ChatTransport,
         model: String,
         usage: PlaybackUsage?,
         afterTurn: MutableList<AfterTurnAction>,
@@ -473,6 +470,8 @@ class Assistant(
             try {
                 action.run()
                 EventLog.log("turn", "After turn: ${EventLog.content(action.description)}")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 EventLog.log("turn", "After turn '${EventLog.content(action.description)}' failed: ${e::class.simpleName}")
                 _state.update { it.copy(error = "Couldn't ${action.description}: ${e.message}") }
