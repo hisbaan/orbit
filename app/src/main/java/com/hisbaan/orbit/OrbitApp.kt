@@ -3,6 +3,8 @@ package com.hisbaan.orbit
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import com.hisbaan.orbit.agent.ShowInfoCardTool
+import com.hisbaan.orbit.assist.OrbitSession
+import com.hisbaan.orbit.assist.OrbitVoiceInteractionService
 import com.hisbaan.orbit.assist.UnlockActivity
 import com.hisbaan.orbit.assistant.Assistant
 import com.hisbaan.orbit.diagnostics.EventLog
@@ -122,6 +124,10 @@ class OrbitApp : Application() {
     val assistant by lazy {
         Assistant(context = this, settings = settings, httpClient = httpClient, tools = tools, tts = tts).apply {
             keyguardDismisser = { UnlockActivity.request(this@OrbitApp) }
+            overlay = object : Assistant.Overlay {
+                override val isShown get() = OrbitSession.isShown
+                override fun resume() = OrbitVoiceInteractionService.resumeOverlay()
+            }
         }
     }
 

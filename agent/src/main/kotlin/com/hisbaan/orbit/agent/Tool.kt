@@ -30,6 +30,13 @@ interface Tool {
      */
     val privateResult: Boolean get() = false
 
+    /**
+     * Reads or acts on the user's private data (notifications, the screen, the calendar,
+     * contacts), so it only runs on an unlocked phone: someone holding a locked phone mustn't
+     * get at it by voice. The agent asks the user to unlock first. See [Agent].
+     */
+    val needsUnlock: Boolean get() = false
+
     /** Runs the tool. Throwing is fine: the agent reports the error back to the model. */
     suspend fun invoke(args: JsonObject): ToolOutcome
 }
@@ -64,7 +71,12 @@ data class ToolOutcome(
  * it reads (notifications, the screen) can confirm on the user's behalf, and what runs is what
  * was read back.
  */
-class PendingAction(val description: String, val run: suspend () -> ToolOutcome)
+class PendingAction(
+    val description: String,
+    /** Security-sensitive (unlocking a door): the yes only counts on an unlocked phone. */
+    val needsUnlock: Boolean = false,
+    val run: suspend () -> ToolOutcome,
+)
 
 class AfterTurnAction(
     val description: String,

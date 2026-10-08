@@ -30,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Runs turns: starts, interrupts and cancels them, and runs their after-turn actions. A voice
@@ -74,10 +76,15 @@ class Assistant(
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + failures)
     private var turn: Job? = null
+
+    /** The voice turn's audio while one is running, so an unlock prompt mid-turn can be announced. */
+    @Volatile
+    private var turnVoice: Voice? = null
     private var lastTriggerSource: String? = null
     private var lastTriggerAt = 0L
 
-    private val conversation = Conversation(Agent(tools, systemPrompt = { SystemPrompt.build() }), _state) { now ->
+    private val agent = Agent(tools, systemPrompt = { SystemPrompt.build() }, unlocked = { ensureUnlocked(midTurn = true) })
+    private val conversation = Conversation(agent, _state) { now ->
         _dismissRequests.tryEmit(Unit)
         scope.launch { runAfterTurn(now) }
     }
@@ -88,6 +95,15 @@ class Assistant(
      */
     @Volatile
     var keyguardDismisser: (suspend () -> Boolean)? = null
+
+    /** The assistant overlay, which steps aside for an unlock prompt mid-turn and comes back after. */
+    interface Overlay {
+        val isShown: Boolean
+        fun resume()
+    }
+
+    @Volatile
+    var overlay: Overlay? = null
 
     init {
         // Bind the HFP proxy now so a headset trigger doesn't wait for it.
@@ -151,6 +167,7 @@ class Assistant(
             val config = settings.current()
             val mic = hasMicPermission()
             audio.open(device, captureMic = mic, voiceName = config.ttsVoice) { headset -> earconStyle(config, headset) }
+            turnVoice = audio
             when {
                 !mic -> emptyList<AfterTurnAction>().also {
                     conversation.say(audio, "Orbit needs microphone permission. Open Orbit to grant it.", error = "Microphone permission missing")
@@ -160,6 +177,7 @@ class Assistant(
             }
         } finally {
             withContext(NonCancellable) {
+                turnVoice = null
                 _state.update { it.copy(phase = Phase.FINISHING) }
                 audio.close()
                 _state.update { it.copy(phase = Phase.IDLE) }
@@ -204,16 +222,38 @@ class Assistant(
         return address?.let { config.headsetSounds[it] } ?: config.defaultSounds
     }
 
+    /**
+     * True if the phone is unlocked, after asking the user to unlock it if it isn't. The overlay
+     * moves aside so the unlock prompt shows.
+     *
+     * [midTurn] (a tool asked): during a voice turn Orbit says what it's waiting for, as the user
+     * may not be looking; the overlay comes back afterwards, unlocked or not, since the turn goes
+     * on and a typed turn's reply is only shown there; and it waits at most [UNLOCK_MID_TURN_MS],
+     * as the headset is held and music paused meanwhile.
+     * Otherwise (an after-turn action that opens an app) none of that, and a longer wait.
+     */
+    private suspend fun ensureUnlocked(midTurn: Boolean): Boolean {
+        if (!keyguardManager.isKeyguardLocked) return true
+        val overlayWasShown = overlay?.isShown == true
+        _dismissRequests.tryEmit(Unit)
+        val dismiss = keyguardDismisser ?: return false
+        if (!midTurn) return withTimeoutOrNull(UNLOCK_AFTER_TURN_MS) { dismiss() } == true
+        val voice = turnVoice
+        val unlocked = coroutineScope {
+            // Waited for before returning: the reply mustn't start while this is still being said.
+            launch { voice?.say(UNLOCK_PROMPT) }
+            withTimeoutOrNull(UNLOCK_MID_TURN_MS) { dismiss() } == true
+        }
+        if (overlayWasShown) overlay?.resume()
+        return unlocked
+    }
+
     private suspend fun runAfterTurn(actions: List<AfterTurnAction>) {
         for (action in actions) {
-            if (action.needsUnlock && keyguardManager.isKeyguardLocked) {
-                val dismiss = keyguardDismisser
-                val unlocked = dismiss != null && dismiss()
-                if (!unlocked) {
-                    EventLog.log("turn", "Skipped '${EventLog.content(action.description)}': device locked")
-                    _state.update { it.copy(error = "Unlock your phone to ${action.description}.") }
-                    continue
-                }
+            if (action.needsUnlock && !ensureUnlocked(midTurn = false)) {
+                EventLog.log("turn", "Skipped '${EventLog.content(action.description)}': device locked")
+                _state.update { it.copy(error = "Unlock your phone to ${action.description}.") }
+                continue
             }
             try {
                 action.run()
@@ -230,6 +270,10 @@ class Assistant(
     private companion object {
         /** Repeats of the same trigger closer together than this are one press delivered twice. */
         const val DUPLICATE_TRIGGER_MS = 500L
+
+        const val UNLOCK_PROMPT = "Unlock your phone to continue."
+        const val UNLOCK_MID_TURN_MS = 20_000L
+        const val UNLOCK_AFTER_TURN_MS = 60_000L
 
         const val NOT_SET_UP = "Orbit isn't set up yet. Add a provider and model in Orbit's settings."
     }

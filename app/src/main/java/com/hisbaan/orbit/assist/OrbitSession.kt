@@ -122,7 +122,13 @@ class OrbitSession(context: Context) :
         super.onShow(args, showFlags)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         isWindowShown = true
+        isShown = true
         cardVisibility.targetState = true
+        if (args?.getBoolean(ARG_RESUME) == true) {
+            // Back after stepping aside for the unlock prompt: the turn is still going.
+            EventLog.log("assist", "Overlay back after unlocking")
+            return
+        }
         val source = args?.getString(ARG_SOURCE) ?: if (showFlags and SHOW_SOURCE_ASSIST_GESTURE != 0) "assist gesture" else "session"
         val device = args?.let { BundleCompat.getParcelable(it, ARG_DEVICE, BluetoothDevice::class.java) }
         EventLog.log("assist", "Overlay shown: source=$source flags=$showFlags")
@@ -134,6 +140,7 @@ class OrbitSession(context: Context) :
         EventLog.log("assist", "Overlay hidden (turn ${if (app.assistant.state.value.phase == Phase.IDLE) "idle" else "continues"})")
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         isWindowShown = false
+        isShown = false
         cardVisibility = MutableTransitionState(false)
         // What was on screen is only for this overlay; don't keep it around.
         ScreenContext.clear()
@@ -216,10 +223,19 @@ class OrbitSession(context: Context) :
     companion object {
         private const val ARG_SOURCE = "orbit.source"
         private const val ARG_DEVICE = "orbit.device"
+        private const val ARG_RESUME = "orbit.resume"
+
+        /** Whether the overlay is on screen. */
+        @Volatile
+        var isShown = false
+            private set
 
         fun args(source: String, device: BluetoothDevice?) = Bundle().apply {
             putString(ARG_SOURCE, source)
             device?.let { putParcelable(ARG_DEVICE, it) }
         }
+
+        /** Shows the overlay again for the turn in progress, without starting a new one. */
+        fun resumeArgs() = Bundle().apply { putBoolean(ARG_RESUME, true) }
     }
 }

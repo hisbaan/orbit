@@ -25,6 +25,7 @@ import kotlinx.serialization.json.JsonObject
  * number dialed is the one read back. After turn: the call needs the SCO link Orbit is holding.
  */
 class CallContactTool(private val context: Context) : Tool {
+    override val needsUnlock = true
     private val numberTypes = mapOf("mobile" to Phone.TYPE_MOBILE, "home" to Phone.TYPE_HOME, "work" to Phone.TYPE_WORK)
 
     override val spec = ToolSpec(

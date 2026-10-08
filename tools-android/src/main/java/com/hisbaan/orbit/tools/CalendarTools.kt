@@ -239,6 +239,8 @@ private const val NO_PERMISSION = "Error: Orbit doesn't have calendar permission
 
 /** Lists events in a time range. */
 class CalendarEventsTool(private val calendar: CalendarAccess, private val zone: () -> ZoneId = ZoneId::systemDefault) : Tool {
+    override val needsUnlock = true
+
     override val spec = ToolSpec(
         name = "calendar_events",
         description = "List the user's calendar events in a time range (recurring events included), with their ids. " +
@@ -286,6 +288,7 @@ class CreateCalendarEventTool(
     private val defaultCalendarId: suspend () -> Long?,
     private val zone: () -> ZoneId = ZoneId::systemDefault,
 ) : Tool {
+    override val needsUnlock = true
     override val confirms = true
 
     override val spec = ToolSpec(
@@ -327,6 +330,8 @@ class CreateCalendarEventTool(
 
 /** Deletes a single (non-recurring) event, held until the user agrees (see [PendingAction]). */
 class DeleteCalendarEventTool(private val calendar: CalendarAccess, private val zone: () -> ZoneId = ZoneId::systemDefault) : Tool {
+    override val needsUnlock = true
+
     override val spec = ToolSpec(
         name = "delete_calendar_event",
         description = "Delete an event by id (from calendar_events or create_calendar_event). Held until the user " +

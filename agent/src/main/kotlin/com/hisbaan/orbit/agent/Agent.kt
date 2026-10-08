@@ -39,6 +39,9 @@ data class AgentResult(
  * Tools run on [toolDispatcher], since many block (content providers, the package manager,
  * image encoding); the callbacks run on the caller's.
  *
+ * [Tool.needsUnlock] tools, and held actions marked [PendingAction.needsUnlock], run only once
+ * [unlocked] says the phone is unlocked; it may ask the user to unlock.
+ *
  * Actions that need the user's yes come back from tools as [PendingAction]s. They are held
  * here under a short ref and run only through [CONFIRM_TOOL], with that ref, in the user's
  * next message: neither the model nor text it reads can confirm on the user's behalf.
@@ -50,6 +53,8 @@ class Agent(
     private val historyTtlMs: Long = 2 * 60_000,
     private val maxSteps: Int = 6,
     private val toolDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** Whether the phone is unlocked, after asking the user to unlock it if it isn't. */
+    private val unlocked: suspend () -> Boolean = { true },
 ) {
     private val history = mutableListOf<ChatMessage>()
     private var lastTurnEndedAt = 0L
@@ -83,6 +88,7 @@ class Agent(
                 // Asked and "confirmed" in one message: the user hasn't answered yet.
                 return ToolOutcome("Not done: the user hasn't answered yet. Ask them, and confirm only once they agree.")
             }
+            if (waiting.action.needsUnlock && !unlocked()) return locked(CONFIRM_TOOL)
             held -= ref
             EventLog.log("agent", "Confirmed by the user: ${EventLog.content(waiting.action.description)}")
             return waiting.action.run()
@@ -203,8 +209,14 @@ class Agent(
             return ToolOutcome("Error: arguments were not valid JSON") to null
         }
         val modelSays = (parsed[CONFIRMATION_ARG] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        if (tool.needsUnlock && !unlocked()) return locked(call.name) to null
         val outcome = runTool(call, tool.privateResult) { tool.invoke(JsonObject(parsed - CONFIRMATION_ARG)) }
         return hold(call, outcome) to modelSays
+    }
+
+    private fun locked(tool: String): ToolOutcome {
+        EventLog.log("tool", "$tool: refused, phone locked")
+        return ToolOutcome(LOCKED)
     }
 
     /** Holds back the action [outcome] waits on, if any, and tells the model how to confirm it. */
@@ -242,6 +254,10 @@ class Agent(
 
         /** The tool through which the model passes on the user's yes to a [PendingAction]. */
         const val CONFIRM_TOOL = "confirm_action"
+
+        private const val LOCKED = "Not done: this needs the phone unlocked, and the user was asked to unlock it but " +
+            "didn't. Say so in a sentence. To use this hands-free, Android can keep the phone unlocked while their " +
+            "headset is connected (Settings > Security > Extend Unlock, trusted device); mention that once."
 
         private val CONFIRMATION_SCHEMA = stringProperty(
             "What to tell the user if this works: one short present-tense sentence, e.g. \"Starting navigation to " +

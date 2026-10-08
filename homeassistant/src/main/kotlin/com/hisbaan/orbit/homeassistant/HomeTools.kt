@@ -64,7 +64,7 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
             if (!HaSafety.namesEntryway(text)) return perform()
             return ToolOutcome(
                 "Not done yet: '$text' may unlock or open something, so it needs the user's confirmation. Ask them.",
-                pending = PendingAction("ask Home Assistant to '$text'") { reportingErrors(perform) },
+                pending = PendingAction("ask Home Assistant to '$text'", needsUnlock = true) { reportingErrors(perform) },
             )
         }
 
@@ -170,7 +170,7 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
             val what = "${service.replace('_', ' ')} ${sensitive.joinToString { it.name }}"
             return ToolOutcome(
                 "Not done yet: $what needs the user's confirmation. Ask them.",
-                pending = PendingAction(what) { reportingErrors(perform) },
+                pending = PendingAction(what, needsUnlock = true) { reportingErrors(perform) },
             )
         }
     }

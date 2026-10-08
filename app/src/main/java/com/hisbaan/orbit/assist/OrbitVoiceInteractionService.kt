@@ -42,6 +42,11 @@ class OrbitVoiceInteractionService : VoiceInteractionService() {
         @Volatile
         private var active: OrbitVoiceInteractionService? = null
 
+        /** Brings the overlay back for the turn in progress (after it stepped aside for the unlock prompt). */
+        fun resumeOverlay() {
+            active?.showSession(OrbitSession.resumeArgs(), 0)
+        }
+
         /** Shows the overlay, which starts a turn. False if Orbit isn't the active assistant. */
         fun showOverlay(args: Bundle): Boolean {
             val service = active ?: return false

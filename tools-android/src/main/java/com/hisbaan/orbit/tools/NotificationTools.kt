@@ -31,6 +31,7 @@ data class NotificationText(val app: String, val title: String?, val lines: List
  */
 class NotificationsTool(private val context: Context) : Tool {
     override val privateResult = true
+    override val needsUnlock = true
 
     override val spec = ToolSpec(
         name = "get_notifications",

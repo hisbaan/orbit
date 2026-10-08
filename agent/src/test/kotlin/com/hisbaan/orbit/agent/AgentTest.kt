@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.Executors
@@ -372,5 +373,46 @@ class AgentTest {
         } finally {
             executor.shutdown()
         }
+    }
+
+    @Test
+    fun `private tools and security actions need the phone unlocked`() = runTest {
+        var unlocked = false
+        var asked = 0
+        val notifications = object : Tool {
+            override val needsUnlock = true
+            override val spec = ToolSpec("get_notifications", "test tool", objectSchema())
+            override suspend fun invoke(args: JsonObject) = ToolOutcome("Sam: dinner at 7?")
+        }
+        var opened = false
+        val door = RecordingTool("home_call_service") {
+            ToolOutcome("Ask first.", pending = PendingAction("unlock front door", needsUnlock = true) {
+                opened = true
+                ToolOutcome("Unlocked.", done = true)
+            })
+        }
+        val agent = Agent(listOf(notifications, door), systemPrompt = { "sys" }, unlocked = { asked++; unlocked })
+        val transport = FakeTransport(
+            calls(ToolCall("1", "get_notifications", "{}")),
+            text("Unlock your phone first."),
+            calls(ToolCall("2", "home_call_service", "{}")),
+            text("Unlock the front door?"),
+            calls(ToolCall("3", "confirm_action", """{"ref":"c1","confirmation":"Unlocked."}""")),
+            text("Unlock your phone first."),
+        )
+
+        agent.respond("read my messages", transport, "m")
+        assertTrue(transport.results(1).single().startsWith("Not done: this needs the phone unlocked"))
+        agent.respond("unlock the front door", transport, "m") // holding it asks nothing yet
+        assertEquals(1, asked)
+        agent.respond("yes", transport, "m")
+        assertEquals(2, asked)
+        assertFalse(opened)
+        assertTrue(transport.results(5).last().startsWith("Not done: this needs the phone unlocked"))
+
+        unlocked = true
+        val again = FakeTransport(calls(ToolCall("4", "get_notifications", "{}")), text("Sam asks about dinner."))
+        agent.respond("read my messages", again, "m")
+        assertEquals("Sam: dinner at 7?", again.results(1).last())
     }
 }
