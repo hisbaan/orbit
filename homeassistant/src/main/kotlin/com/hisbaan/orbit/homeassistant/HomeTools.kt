@@ -93,7 +93,7 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
         )
 
         override suspend fun run(ha: HomeAssistant, args: JsonObject): ToolOutcome {
-            val areas = ha.areas()
+            val areas = ha.areas().orEmpty()
             val matches = HaEntity.filter(ha.states(), areas, args.string("query"), args.string("domain"))
             if (matches.isEmpty()) return ToolOutcome("Nothing in Home Assistant matches.")
             val shown = matches.take(LIMIT)
@@ -140,7 +140,15 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
             val resolution = coroutineScope {
                 val states = async { ha.states() }
                 val areas = if (needAreas) ha.areas() else emptyMap()
-                HaTargets.resolve(states.await(), areas, names, area, explicitDomain)
+                // (The scope still waits for the states request, so a credential that doesn't work
+                // fails there, with the sign-in message, rather than here.)
+                if (areas == null && area != null) {
+                    return@coroutineScope HaTargets.Resolution.Problem(
+                        "Home Assistant only shares its rooms with admin accounts, and Orbit isn't signed in as one. " +
+                            "Name the devices instead.",
+                    )
+                }
+                HaTargets.resolve(states.await(), areas.orEmpty(), names, area, explicitDomain)
             }
             val (targets, skipped) = when (resolution) {
                 is HaTargets.Resolution.Problem -> return ToolOutcome("Not done: ${resolution.message}")
@@ -150,19 +158,32 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
                 // One call per domain, so a bare service ("turn_off") works across lights and switches.
                 val byDomain = targets.groupBy { explicitDomain ?: it.domain }
                 val reported = mutableMapOf<String, HaEntity>()
+                // A domain can refuse what another accepted (brightness for a switch): report each,
+                // so the model doesn't retry what already went through.
+                val failed = mutableMapOf<String, HaException>()
                 for ((domain, group) in byDomain) {
                     val body = JsonObject(data + ("entity_id" to JsonArray(group.map { JsonPrimitive(it.entityId) })))
-                    ha.callService(domain, service, body).forEach { reported[it.entityId] = it }
+                    try {
+                        ha.callService(domain, service, body).forEach { reported[it.entityId] = it }
+                    } catch (e: HaException) {
+                        if (e.unauthorized || failed.size + 1 == byDomain.size) throw e // the sign-in, or nothing worked
+                        failed[domain] = e
+                    }
                 }
-                val after = settle(ha, targets, reported, service.takeIf { data.isEmpty() }?.let(HaTargets::targetState))
+                val called = targets.filter { (explicitDomain ?: it.domain) !in failed }
+                val after = settle(ha, called, reported, service.takeIf { data.isEmpty() }?.let(HaTargets::targetState))
 
-                val what = "$requested on " + (area?.let { "${targets.size} in $it" } ?: targets.joinToString { it.name })
-                val lines = targets.map { before ->
+                val what = "$requested on " + (area?.let { "${called.size} in $it" } ?: called.joinToString { it.name })
+                val lines = called.map { before ->
                     val now = after[before.entityId]
                     if (now != null) now.describe() else "${before.describe()} (not updated yet; the device may still be changing)"
                 }
+                val failedNote = failed.entries.joinToString("") { (domain, e) ->
+                    val names = targets.filter { (explicitDomain ?: it.domain) == domain }.joinToString { it.name }
+                    "\nFailed for $names: ${e.message}"
+                }
                 val skippedNote = if (skipped.isEmpty()) "" else "\nSkipped, unavailable: ${skipped.joinToString { it.name }}"
-                ToolOutcome("Called $what. Now:\n" + lines.joinToString("\n") + skippedNote)
+                ToolOutcome("Called $what. Now:\n" + lines.joinToString("\n") + failedNote + skippedNote)
             }
 
             val sensitive = targets.filter { HaSafety.needsConfirmation(explicitDomain ?: it.domain, service, it) }

@@ -174,14 +174,33 @@ class Agent(
             history += ChatMessage.Assistant(reply)
             return AgentResult(reply, afterTurn, calls)
         } catch (e: Throwable) {
-            // Leave history as it was before this turn so a retry starts clean. Its questions
-            // were never heard, and the retry answers the previous message's.
-            while (history.size > mark) history.removeAt(history.lastIndex)
+            // Actions held this turn were never asked about.
             held.values.removeAll { it.userMessage == userMessages }
-            userMessages--
+            if (history.subList(mark, history.size).any { it is ChatMessage.ToolResult }) {
+                // Tools ran (a timer may be set): keep what happened, so a retry doesn't do it twice.
+                answerUnrunCalls()
+            } else {
+                // Nothing happened: leave history as it was before this message, so a retry starts
+                // clean and answers the previous message's questions.
+                while (history.size > mark) history.removeAt(history.lastIndex)
+                userMessages--
+            }
             throw e
         } finally {
             lastTurnEndedAt = clock()
+        }
+    }
+
+    /**
+     * Gives the last step's calls that never ran (the turn ended partway through it) a result:
+     * providers reject a tool call with no result after it.
+     */
+    private fun answerUnrunCalls() {
+        val step = history.indexOfLast { it is ChatMessage.Assistant && it.toolCalls.isNotEmpty() }
+        if (step < 0) return
+        val answered = history.subList(step, history.size).filterIsInstance<ChatMessage.ToolResult>().map { it.toolCallId }.toSet()
+        (history[step] as ChatMessage.Assistant).toolCalls.filter { it.id !in answered }.forEach {
+            history += ChatMessage.ToolResult(it.id, "Not run: the turn ended before this call.")
         }
     }
 

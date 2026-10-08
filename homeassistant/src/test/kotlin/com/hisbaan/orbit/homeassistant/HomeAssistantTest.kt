@@ -10,6 +10,8 @@ import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -333,5 +335,70 @@ class HomeAssistantTest {
         val ha = livingRoom(lagging = setOf("light.mushroom_lamp"))
         val result = ha.tools().callService.invoke(args("""{"entities":"light.mushroom_lamp","service":"turn_on"}""")).result
         assertEquals("Called turn_on on Mushroom lamp. Now:\nlight.mushroom_lamp \"Mushroom lamp\": on, brightness 100%", result)
+    }
+
+    @Test
+    fun `a non-admin account works without rooms, and is only asked once`() = runTest {
+        var templates = 0
+        val server = Server { request, _ ->
+            when (request.url.encodedPath) {
+                "/api/states" -> json(statesJson)
+                // HA answers templates for admins only.
+                "/api/template" -> json("""{"message":"Unauthorized"}""", HttpStatusCode.Unauthorized).also { templates++ }
+                else -> error("unexpected ${request.url}")
+            }
+        }
+        // One instance, as the app keeps one per credential.
+        val ha = HomeAssistant(server.client, "https://ha.test", HaCredential.LongLived("t"))
+        val tools = HomeTools({ ha }, { "en" })
+
+        val listed = tools.states.invoke(args("{}")).result
+        assertTrue(listed, listed.startsWith("light.kitchen \"Kitchen light\": on"))
+        val byRoom = tools.callService.invoke(args("""{"area":"kitchen","service":"light.turn_off"}""")).result
+        assertTrue(byRoom, byRoom.startsWith("Not done: Home Assistant only shares its rooms with admin accounts"))
+        assertEquals(1, templates)
+    }
+
+    @Test
+    fun `reports what went through when one kind of device refuses`() = runTest {
+        val calls = mutableListOf<String>()
+        val server = Server { request, _ ->
+            val path = request.url.encodedPath
+            when {
+                path == "/api/states" -> json(
+                    """[{"entity_id":"light.desk","state":"off","attributes":{"friendly_name":"Desk lamp"}},
+                        {"entity_id":"switch.fan","state":"off","attributes":{"friendly_name":"Fan"}}]""",
+                )
+                path.startsWith("/api/states/") -> json("""{"entity_id":"${path.removePrefix("/api/states/")}","state":"on","attributes":{}}""")
+                path == "/api/services/light/turn_on" -> json("""[{"entity_id":"light.desk","state":"on","attributes":{"friendly_name":"Desk lamp"}}]""").also { calls += path }
+                path == "/api/services/switch/turn_on" ->
+                    json("""{"message":"extra keys not allowed @ data['brightness_pct']"}""", HttpStatusCode.BadRequest).also { calls += path }
+                else -> error("unexpected $path")
+            }
+        }
+
+        val result = tools(server).callService.invoke(
+            args("""{"entities":"light.desk, switch.fan","service":"turn_on","data":{"brightness_pct":40}}"""),
+        ).result
+
+        assertEquals(2, calls.size)
+        assertTrue(result, result.startsWith("Called turn_on on Desk lamp. Now:\nlight.desk \"Desk lamp\": on"))
+        assertTrue(result, "Failed for Fan: Home Assistant: HTTP 400" in result)
+    }
+
+    @Test
+    fun `concurrent rejections refresh the token once`() = runTest {
+        var minted = 0
+        val server = Server { request, _ ->
+            when (request.url.encodedPath) {
+                "/auth/token" -> json("""{"access_token":"a${++minted}","expires_in":1800}""")
+                else -> if (request.headers[HttpHeaders.Authorization] == "Bearer a1") json("{}", HttpStatusCode.Unauthorized) else json("""{"location_name":"Home"}""")
+            }
+        }
+        val ha = HomeAssistant(server.client, "https://ha.test", HaCredential.OAuth("r1"))
+
+        // All three get a1, all three are refused; only the first replaces it.
+        coroutineScope { repeat(3) { launch { assertEquals("Home", ha.locationName()) } } }
+        assertEquals(2, minted)
     }
 }

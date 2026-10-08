@@ -8,6 +8,7 @@ import com.hisbaan.orbit.providers.ChatResponse
 import com.hisbaan.orbit.providers.ChatTransport
 import com.hisbaan.orbit.providers.ToolCall
 import com.hisbaan.orbit.providers.ToolSpec
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
@@ -414,5 +415,43 @@ class AgentTest {
         val again = FakeTransport(calls(ToolCall("4", "get_notifications", "{}")), text("Sam asks about dinner."))
         agent.respond("read my messages", again, "m")
         assertEquals("Sam: dinner at 7?", again.results(1).last())
+    }
+
+    @Test
+    fun `a failure after tools ran keeps what they did`() = runTest {
+        val timer = RecordingTool("set_timer") { ToolOutcome("Timer set for 10 minutes.") }
+        val agent = Agent(listOf(timer), systemPrompt = { "sys" })
+        // The model sets the timer, then the connection drops before it can answer.
+        val dropping = object : ChatTransport {
+            var calls = 0
+            override suspend fun complete(request: ChatRequest, onTextDelta: (String) -> Unit): ChatResponse =
+                if (calls++ == 0) calls(ToolCall("1", "set_timer", """{"minutes":10}""")) else error("offline")
+            override suspend fun listModels() = emptyList<String>()
+        }
+        runCatching { agent.respond("set a 10 minute timer", dropping, "m") }
+
+        val retry = FakeTransport(text("Your timer's already running."))
+        agent.respond("did you set it?", retry, "m")
+        val messages = retry.requests[0].messages
+        assertEquals("Timer set for 10 minutes.", messages.filterIsInstance<ChatMessage.ToolResult>().single().content)
+        assertEquals(listOf("set a 10 minute timer", "did you set it?"), messages.filterIsInstance<ChatMessage.User>().map { it.content })
+    }
+
+    @Test
+    fun `calls cut short get a result so the history stays valid`() = runTest {
+        val first = RecordingTool("pause") { ToolOutcome("Paused.") }
+        val second = object : Tool {
+            override val spec = ToolSpec("navigate", "test tool", objectSchema())
+            override suspend fun invoke(args: JsonObject): ToolOutcome = throw CancellationException("button pressed")
+        }
+        val agent = Agent(listOf(first, second), systemPrompt = { "sys" })
+        runCatching {
+            agent.respond("pause and take me home", FakeTransport(calls(ToolCall("1", "pause", "{}"), ToolCall("2", "navigate", "{}"))), "m")
+        }
+
+        val retry = FakeTransport(text("ok"))
+        agent.respond("again", retry, "m")
+        val results = retry.requests[0].messages.filterIsInstance<ChatMessage.ToolResult>().associate { it.toolCallId to it.content }
+        assertEquals(mapOf("1" to "Paused.", "2" to "Not run: the turn ended before this call."), results)
     }
 }

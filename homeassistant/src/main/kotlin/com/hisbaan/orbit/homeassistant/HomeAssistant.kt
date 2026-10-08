@@ -1,5 +1,6 @@
 package com.hisbaan.orbit.homeassistant
 
+import com.hisbaan.orbit.diagnostics.EventLog
 import io.ktor.client.HttpClient
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
@@ -15,6 +16,7 @@ import io.ktor.http.Url
 import io.ktor.http.content.TextContent
 import io.ktor.http.isSuccess
 import io.ktor.http.parameters
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -131,6 +133,10 @@ class HomeAssistant(
     private var accessToken: String? = (credential as? HaCredential.LongLived)?.token
     private var expiresAt = Long.MAX_VALUE
 
+    /** Set once HA refuses [areas] (admin only), so a non-admin account isn't asked on every call. */
+    @Volatile
+    private var areasRefused = false
+
     /** The instance's name ("Home"), which also proves the credential works. */
     suspend fun locationName(): String =
         json.parseToJsonElement(get("/api/config")).jsonObject["location_name"]?.jsonPrimitive?.contentOrNull ?: "Home Assistant"
@@ -138,13 +144,31 @@ class HomeAssistant(
     suspend fun states(): List<HaEntity> =
         (json.parseToJsonElement(get("/api/states")) as JsonArray).mapNotNull { (it as? JsonObject)?.let(HaEntity::parse) }
 
-    suspend fun state(entityId: String): HaEntity? =
-        runCatching { HaEntity.parse(json.parseToJsonElement(get("/api/states/$entityId")).jsonObject) }.getOrNull()
+    /** The entity's current state, or null if it can't be read right now. */
+    suspend fun state(entityId: String): HaEntity? = try {
+        HaEntity.parse(json.parseToJsonElement(get("/api/states/$entityId")).jsonObject)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
 
-    /** entity_id → area name, for entities that have one. */
-    suspend fun areas(): Map<String, String> {
+    /**
+     * entity_id → area name, for entities that have one. Null when HA won't say: it answers
+     * templates for admin accounts only. A credential that doesn't work at all fails the states
+     * request made alongside, so a refusal here is taken to mean "not an admin".
+     */
+    suspend fun areas(): Map<String, String>? {
+        if (areasRefused) return null
         val template = "{% for s in states %}{% set a = area_name(s.entity_id) %}{% if a %}{{ s.entity_id }}|{{ a }}\n{% endif %}{% endfor %}"
-        val text = post("/api/template", buildJsonObject { put("template", template) })
+        val text = try {
+            post("/api/template", buildJsonObject { put("template", template) })
+        } catch (e: HaException) {
+            if (!e.unauthorized) throw e
+            EventLog.log("ha", "Areas refused (HTTP ${e.status}): the account isn't an admin")
+            areasRefused = true
+            return null
+        }
         return text.lineSequence().mapNotNull { line ->
             line.split('|', limit = 2).takeIf { it.size == 2 && it[0].isNotBlank() }?.let { it[0].trim() to it[1].trim() }
         }.toMap()
@@ -186,19 +210,24 @@ class HomeAssistant(
 
     /** Runs [request] with a valid token; on a 401 with OAuth, refreshes once and retries. */
     private suspend fun authorized(request: suspend (String) -> HttpResponse): String {
-        var response = request(token(forceRefresh = false))
+        val first = token(failed = null)
+        var response = request(first)
         if (response.status == HttpStatusCode.Unauthorized && credential is HaCredential.OAuth) {
-            response = request(token(forceRefresh = true))
+            response = request(token(failed = first))
         }
         val body = response.bodyAsText()
         if (!response.status.isSuccess()) throw HaException("Home Assistant: HTTP ${response.status.value} ${body.take(200)}", response.status.value)
         return body
     }
 
-    private suspend fun token(forceRefresh: Boolean): String = tokenLock.withLock {
+    /**
+     * A current access token. [failed] is one the server just refused: replaced unless another
+     * request already did, so concurrent 401s refresh once.
+     */
+    private suspend fun token(failed: String?): String = tokenLock.withLock {
         val current = accessToken
         if (credential is HaCredential.LongLived) return credential.token
-        if (current != null && !forceRefresh && clock() < expiresAt) return current
+        if (current != null && current != failed && clock() < expiresAt) return current
         val refreshToken = (credential as HaCredential.OAuth).refreshToken
         val tokens = HaAuth.refresh(http, origin, refreshToken)
         accessToken = tokens.accessToken
