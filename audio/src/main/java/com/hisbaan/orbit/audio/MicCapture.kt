@@ -68,7 +68,8 @@ object MicCapture {
 
     /**
      * Records until [stop] is set or the coroutine is cancelled, handing every 20 ms chunk
-     * to [onChunk] on the capture thread.
+     * to [onChunk] on the capture thread. If the mic can't be opened (no permission, held by
+     * another app, blocked), it logs why and returns an empty [Result] rather than throwing.
      */
     @SuppressLint("MissingPermission")
     suspend fun record(
@@ -78,7 +79,10 @@ object MicCapture {
         onChunk: ChunkListener,
     ): Result = withContext(Dispatchers.IO) {
         val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val record = AudioRecord.Builder()
+        val nothing = Result(0, null, Float.NEGATIVE_INFINITY)
+        // build() throws when the record can't be created, rather than returning an uninitialized one.
+        val record = try {
+            AudioRecord.Builder()
             .setAudioSource(source.value)
             .setAudioFormat(
                 AudioFormat.Builder()
@@ -89,11 +93,15 @@ object MicCapture {
             )
             .setBufferSizeInBytes(max(minBuffer, SAMPLE_RATE / 5 * 2))
             .build()
+        } catch (e: Exception) {
+            EventLog.log("mic", "Couldn't open the mic (source=${source.label}): $e")
+            return@withContext nothing
+        }
 
         if (record.state != AudioRecord.STATE_INITIALIZED) {
             EventLog.log("mic", "AudioRecord failed to initialize (source=${source.label})")
             record.release()
-            return@withContext Result(0, null, Float.NEGATIVE_INFINITY)
+            return@withContext nothing
         }
 
         preferredDevice?.let {
@@ -110,7 +118,12 @@ object MicCapture {
         val chunk = ShortArray(CHUNK_SAMPLES)
 
         try {
-            record.startRecording()
+            try {
+                record.startRecording()
+            } catch (e: IllegalStateException) {
+                EventLog.log("mic", "Couldn't start recording (source=${source.label}): $e")
+                return@withContext nothing
+            }
             EventLog.log(
                 "mic",
                 "Recording source=${source.label} state=${record.recordingState} " +
@@ -133,7 +146,8 @@ object MicCapture {
                 onChunk.onChunk(chunk, n, rms, peak)
             }
         } finally {
-            record.stop()
+            // Throws if recording never started; that mustn't hide why.
+            runCatching { record.stop() }
             record.removeOnRoutingChangedListener(routingListener)
             record.release()
         }

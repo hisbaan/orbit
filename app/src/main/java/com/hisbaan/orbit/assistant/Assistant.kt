@@ -34,6 +34,7 @@ import com.hisbaan.orbit.speech.OnDeviceStt
 import com.hisbaan.orbit.speech.TtsSpeaker
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -91,7 +92,12 @@ class Assistant(
     private val stt = OnDeviceStt(appContext)
     private val agent = Agent(tools, systemPrompt = { SystemPrompt.build() })
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** A turn that fails ends with an error on screen instead of taking the app down. */
+    private val failures = CoroutineExceptionHandler { _, e ->
+        EventLog.log("turn", "Failed: $e")
+        _state.update { it.copy(phase = Phase.IDLE, error = "Something went wrong: ${e.message ?: e::class.simpleName}") }
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + failures)
     private var turn: Job? = null
 
     /** True while a streamed reply is being spoken: a trigger then interrupts instead of cancelling. */
@@ -181,6 +187,7 @@ class Assistant(
         // One capture stream for the whole turn keeps the SCO link up. Chunks go to the
         // recognizer only while it's listening.
         val stopCapture = AtomicBoolean(false)
+        val captureEnded = AtomicBoolean(false)
         val listener = AtomicReference<Channel<ShortArray>?>(null)
         // Set up one by one inside the try, so a turn cancelled while starting (a second press,
         // the user typing) undoes exactly what it got to: focus, route, capture.
@@ -200,15 +207,25 @@ class Assistant(
             val sounds = earconStyle(config, acquired.hfpDevice ?: device)
             step("Listening sounds: ${sounds.label}")
 
-            capture = scope.launch {
-                MicCapture.record(CaptureSource.VOICE_RECOGNITION, null, stopCapture) { samples, count, _, _ ->
-                    listener.get()?.trySend(samples.copyOf(count))
+            // Without the permission there's nothing to capture; converse() says so.
+            if (hasMicPermission()) {
+                capture = scope.launch {
+                    MicCapture.record(CaptureSource.VOICE_RECOGNITION, null, stopCapture) { samples, count, _, _ ->
+                        listener.get()?.trySend(samples.copyOf(count))
+                    }
+                    if (!stopCapture.get()) {
+                        // The mic couldn't be opened, or stopped mid-turn. End a listen in progress
+                        // now rather than after it gives up on silence.
+                        captureEnded.set(true)
+                        step("Capture ended early")
+                        listener.get()?.close()
+                    }
                 }
             }
             linkWatch = scope.launch(Dispatchers.IO) { watchHfpLink(acquired, step) }
 
             router.awaitHfpAudio(acquired, timeoutMs = 1_500)?.let { step("HFP link up after ${it}ms") }
-            converse(config, usage, sounds, listener, typed, afterTurn, step)
+            converse(config, usage, sounds, listener, captureEnded, typed, afterTurn, step)
         } finally {
             withContext(NonCancellable) {
                 interruptible = false
@@ -263,11 +280,12 @@ class Assistant(
         usage: PlaybackUsage,
         sounds: EarconStyle,
         listener: AtomicReference<Channel<ShortArray>?>,
+        captureEnded: AtomicBoolean,
         typed: String?,
         afterTurn: MutableList<AfterTurnAction>,
         step: (String) -> Unit,
     ) {
-        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (!hasMicPermission()) {
             return speak("Orbit needs microphone permission. Open Orbit to grant it.", usage, error = "Microphone permission missing")
         }
         if (!config.isProviderConfigured) {
@@ -280,6 +298,7 @@ class Assistant(
             val text = if (exchange == 0 && typed != null) {
                 typed
             } else {
+                if (captureEnded.get()) return micUnavailable(usage)
                 PcmPlayer.play(Earcons.listening(sounds, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, usage)
                 _state.value = AssistantState(phase = Phase.LISTENING)
                 step(if (followUp) "Listening for a follow-up" else "Listening")
@@ -298,7 +317,11 @@ class Assistant(
                 when (heard) {
                     is OnDeviceStt.Result.Text -> heard.text
                     // Silence after a question just ends the turn.
-                    OnDeviceStt.Result.NoSpeech -> return if (followUp) Unit else speak("Sorry, I didn't catch that.", usage)
+                    OnDeviceStt.Result.NoSpeech -> return when {
+                        captureEnded.get() -> micUnavailable(usage)
+                        followUp -> Unit
+                        else -> speak("Sorry, I didn't catch that.", usage)
+                    }
                     is OnDeviceStt.Result.Failed -> return speak(heard.message, usage, error = heard.message)
                 }
             }
@@ -409,6 +432,12 @@ class Assistant(
             watcher.cancel()
         }
     }
+
+    private fun hasMicPermission() =
+        ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private suspend fun micUnavailable(usage: PlaybackUsage) =
+        speak("I couldn't open the microphone. Another app may be using it.", usage, error = "Microphone unavailable")
 
     /** The headset's own choice of listening sounds (e.g. alerting for a helmet intercom), else the default. */
     private fun earconStyle(config: AppSettings, headset: BluetoothDevice?): EarconStyle {
