@@ -1,6 +1,7 @@
 package com.hisbaan.orbit.tools
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -59,5 +60,24 @@ class CalendarFormatTest {
         assertEquals(2L, CalendarAccess.pick(calendars, "work", defaultId = 4)?.id)
         assertEquals(2L, CalendarAccess.pick(calendars, "work")?.id)
         assertEquals(null, CalendarAccess.pick(calendars, "Holidays"))
+    }
+
+    @Test
+    fun `all-day events count on their own date, not the neighbouring one`() {
+        fun allDay(date: String) = CalendarFormat.span(date, null, null, null, toronto).getOrThrow()
+            .let { CalendarFormat.Event(1, "Holiday", it.begin, it.end, allDay = true, location = null, calendar = "c") }
+        // "Today" in Toronto: 04:00Z to 04:00Z, which also covers tomorrow's first UTC hours.
+        val today = Instant.parse("2026-10-08T04:00:00Z")
+        val tomorrow = Instant.parse("2026-10-09T04:00:00Z")
+        assertTrue(CalendarFormat.inRange(allDay("2026-10-08"), today, tomorrow, toronto))
+        assertFalse(CalendarFormat.inRange(allDay("2026-10-09"), today, tomorrow, toronto))
+        assertFalse(CalendarFormat.inRange(allDay("2026-10-07"), today, tomorrow, toronto))
+        // East of UTC the overlap is with yesterday instead.
+        val tokyo = ZoneId.of("Asia/Tokyo")
+        assertTrue(CalendarFormat.inRange(allDay("2026-10-08"), Instant.parse("2026-10-07T15:00:00Z"), Instant.parse("2026-10-08T15:00:00Z"), tokyo))
+        assertFalse(CalendarFormat.inRange(allDay("2026-10-07"), Instant.parse("2026-10-07T15:00:00Z"), Instant.parse("2026-10-08T15:00:00Z"), tokyo))
+        // Timed events: plain overlap.
+        val meeting = CalendarFormat.Event(2, "Standup", Instant.parse("2026-10-09T13:00:00Z"), Instant.parse("2026-10-09T13:15:00Z"), false, null, "c")
+        assertFalse(CalendarFormat.inRange(meeting, today, tomorrow, toronto))
     }
 }

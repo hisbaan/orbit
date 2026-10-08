@@ -46,7 +46,6 @@ private const val NO_ACCESS =
 class MediaControlTool(
     context: Context,
     private val sessions: MediaSessions,
-    private val musicPackage: suspend () -> String?,
 ) : Tool {
     override val confirms = true
 
@@ -89,7 +88,7 @@ class MediaControlTool(
                 "No player matches '$player'. Active: ${sessions.controllers().joinToString { sessions.describeWhere(it) }.ifEmpty { "none" }}",
             )
         } else {
-            sessions.target(musicPackage())
+            sessions.target()
         }
         if (action in volume) return changeVolume(action, args.int("volume_percent"), controller)
         if (controller == null) {
@@ -170,7 +169,6 @@ class MediaControlTool(
 class MediaInfoTool(
     private val context: Context,
     private val sessions: MediaSessions,
-    private val musicPackage: suspend () -> String?,
 ) : Tool {
     override val spec = ToolSpec(
         name = "media_info",
@@ -181,7 +179,7 @@ class MediaInfoTool(
 
     override suspend fun invoke(args: JsonObject): ToolOutcome {
         if (!sessions.hasAccess) return ToolOutcome(NO_ACCESS)
-        val main = sessions.target(musicPackage()) ?: return ToolOutcome("Nothing is playing and no media app is active.")
+        val main = sessions.target() ?: return ToolOutcome("Nothing is playing and no media app is active.")
         val others = sessions.controllers().filter { it.sessionToken != main.sessionToken }.take(3)
         val lines = listOf("Main player: ${describe(main, withActions = true)}") + others.map { "Other player: ${describe(it, withActions = false)}" }
         // Orbit holds audio focus during a turn, so a local "paused" usually means "paused for Orbit".
@@ -272,10 +270,15 @@ class PlayMusicTool(
             musicPackage() ?: sessions.target()?.packageName ?: defaultMusicApp()
         }
         sessions.log("play_music ${EventLog.content(query)} -> ${pkg ?: "no app"}${named?.let { " (asked for $it)" } ?: ""}")
-        if (pkg == YOUTUBE_MUSIC) {
-            playOnYouTubeMusic(query, args.string("kind"), args.string("artist"))?.let { return it }
+        // YouTube Music refuses play-from-search from Orbit, so its only paths are its own search
+        // API (then a link that plays) or opening its search.
+        if (pkg == YOUTUBE_MUSIC) return playOnYouTubeMusic(query, args.string("kind"), args.string("artist"), extras)
+        if (pkg == SPOTIFY) {
+            return openSearch(
+                SPOTIFY, "Spotify", query, extras,
+                why = "it doesn't let other apps start a song",
+            )
         }
-        if (pkg == SPOTIFY) return spotifySearch(query, extras)
         val session = sessions.target(pkg)
             ?.takeIf { (pkg == null || it.packageName == pkg) && it.supports(PlaybackState.ACTION_PLAY_FROM_SEARCH) }
         val result = "Queued: '$query' will start playing after you finish speaking."
@@ -314,21 +317,21 @@ class PlayMusicTool(
     }
 
     /**
-     * Spotify only searches when other apps ask it to play something: it ignores play-from-search
-     * through its media session, refuses our media browser connection, and its Web API needs a
-     * Premium developer account. Opening a track link would play, but finding the track needs that
-     * API. So open its search and tell the model it's a search, not playback.
+     * Opens [pkg]'s search for [query] and tells the model it's a search, not playback, and
+     * [why]. Spotify always ends up here: it ignores play-from-search through its media session,
+     * refuses our media browser connection, and finding a track to open needs its Web API (a
+     * Premium developer account). YouTube Music does when its search API can't be reached.
      */
-    private fun spotifySearch(query: String, extras: Bundle): ToolOutcome {
+    private fun openSearch(pkg: String, app: String, query: String, extras: Bundle, why: String): ToolOutcome {
         val intent = Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-            .setPackage(SPOTIFY)
+            .setPackage(pkg)
             .putExtra(SearchManager.QUERY, query)
             .putExtras(extras)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return ToolOutcome(
-            "Spotify will open its search results for '$query' after you finish speaking, but it doesn't let other " +
-                "apps start a song, so the user has to tap it. Say that briefly.",
-            AfterTurnAction("search Spotify for '$query'", needsUnlock = true) { context.startActivity(intent) },
+            "$app will open its search results for '$query' after you finish speaking, but $why, so the user has to " +
+                "tap the song. Say that briefly.",
+            AfterTurnAction("search $app for '$query'", needsUnlock = true) { context.startActivity(intent) },
         )
     }
 
@@ -341,16 +344,17 @@ class PlayMusicTool(
         .resolveActivity(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH), PackageManager.MATCH_DEFAULT_ONLY)
         ?.activityInfo?.packageName?.takeIf { it != "android" }
 
-    /** Searches YouTube Music and queues the best match. Null means "use the generic path". */
-    private suspend fun playOnYouTubeMusic(query: String, kind: String?, artist: String?): ToolOutcome? {
-        val locale = Locale.getDefault()
+    /** Searches YouTube Music and queues the best match; if the search fails, opens the app's own search. */
+    private suspend fun playOnYouTubeMusic(query: String, kind: String?, artist: String?, extras: Bundle): ToolOutcome {
         val results = try {
-            youTubeMusic.search(query, locale.language.ifEmpty { "en" }, locale.country.ifEmpty { "US" })
+            // English results whatever the phone's language: results are told apart by their
+            // English labels ("Song", "Album"). The country still picks the catalogue.
+            youTubeMusic.search(query, language = "en", country = Locale.getDefault().country.ifEmpty { "US" })
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            sessions.log("YouTube Music search failed ($e); falling back to the intent")
-            return null
+            sessions.log("YouTube Music search failed (${e::class.simpleName}); opening its search instead")
+            return openSearch(YOUTUBE_MUSIC, "YouTube Music", query, extras, why = "Orbit couldn't reach YouTube Music to find the exact song")
         }
         val pick = YouTubeMusicSearch.pick(results, kind, artist)
             ?: return ToolOutcome("YouTube Music found nothing playable for '$query'.")

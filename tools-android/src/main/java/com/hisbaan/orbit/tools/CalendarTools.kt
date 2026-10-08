@@ -214,6 +214,20 @@ object CalendarFormat {
         append(") [id ${event.id}]")
     }
 
+    /**
+     * Whether [event] falls in [from, to). All-day events are stored from UTC midnight to UTC
+     * midnight, so the provider, comparing instants, also returns the neighbouring day's ("today"
+     * in Toronto overlaps the first hours of tomorrow in UTC). Compare those by date instead.
+     */
+    fun inRange(event: Event, from: Instant, to: Instant, zone: ZoneId): Boolean {
+        if (!event.allDay) return event.begin < to && event.end > from
+        val firstDay = event.begin.atZone(ZoneOffset.UTC).toLocalDate()
+        val endDay = event.end.atZone(ZoneOffset.UTC).toLocalDate() // exclusive
+        val rangeFirst = from.atZone(zone).toLocalDate()
+        val rangeLast = to.minusNanos(1).atZone(zone).toLocalDate()
+        return firstDay <= rangeLast && endDay > rangeFirst
+    }
+
     fun describeRange(from: Instant, to: Instant, zone: ZoneId): String {
         val f = from.atZone(zone)
         val t = to.atZone(zone)
@@ -250,7 +264,8 @@ class CalendarEventsTool(private val calendar: CalendarAccess, private val zone:
         if (!end.isAfter(begin)) return ToolOutcome("Error: end must be after start")
         val query = args.string("query")
         val events = calendar.events(begin, end).filter { e ->
-            query == null || listOfNotNull(e.title, e.location, e.calendar).any { it.contains(query, ignoreCase = true) }
+            CalendarFormat.inRange(e, begin, end, zone) &&
+                (query == null || listOfNotNull(e.title, e.location, e.calendar).any { it.contains(query, ignoreCase = true) })
         }
         val limit = args.int("limit") ?: 25
         EventLog.log("calendar", "Listed ${events.size} events")

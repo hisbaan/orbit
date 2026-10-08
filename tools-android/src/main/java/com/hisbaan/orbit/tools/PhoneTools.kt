@@ -43,8 +43,7 @@ class CallContactTool(private val context: Context) : Tool {
 
     override suspend fun invoke(args: JsonObject): ToolOutcome {
         val who = args.requireString("who")
-        val digits = who.filter { it.isDigit() || it == '+' }
-        if (digits.count { it.isDigit() } >= 3 && digits.length >= who.count { !it.isWhitespace() } - 2) {
+        phoneNumber(who)?.let { digits ->
             return askToConfirm("the number ${digits.toList().joinToString(" ")}") { dial(digits, digits) }
         }
         if (!granted(Manifest.permission.READ_CONTACTS)) {
@@ -117,6 +116,14 @@ class CallContactTool(private val context: Context) : Tool {
 
     private fun granted(permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    companion object {
+        private val FORMATTING = Regex("[\\s().\\-]")
+        private val NUMBER = Regex("\\+?\\d{3,}")
+
+        /** [who] as a dialable number ("+15551234567"), if it's a phone number rather than a name. */
+        fun phoneNumber(who: String): String? = who.replace(FORMATTING, "").takeIf { NUMBER.matches(it) }
+    }
 }
 
 /** Opens an installed app by name. After turn. */

@@ -58,7 +58,8 @@ class MediaSessions(context: Context) {
     /**
      * The session commands should go to: [preferredPackage]'s if it has one, otherwise
      * whatever is playing, otherwise the most recent. While Orbit holds focus nothing is
-     * "playing", which is why recency is the fallback.
+     * "playing", which is why recency is the fallback. Controls pass no preference: "pause"
+     * means what's playing, even if the music app setting names another app.
      */
     fun target(preferredPackage: String? = null): MediaController? {
         val all = controllers()

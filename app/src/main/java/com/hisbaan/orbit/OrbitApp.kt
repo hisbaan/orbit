@@ -92,8 +92,8 @@ class OrbitApp : Application() {
 
     val tools by lazy {
         listOf(
-            MediaControlTool(this, mediaSessions) { settings.current().musicPackage },
-            MediaInfoTool(this, mediaSessions) { settings.current().musicPackage },
+            MediaControlTool(this, mediaSessions),
+            MediaInfoTool(this, mediaSessions),
             PlayMusicTool(this, mediaSessions, YouTubeMusicSearch(httpClient)) { settings.current().musicPackage },
             PlaySavedPlaylistTool(this, mediaSessions) { settings.latest.value?.savedPlaylists.orEmpty() },
             NavigationTool(this),
