@@ -30,6 +30,8 @@ data class NotificationText(val app: String, val title: String?, val lines: List
  * are left out; media_info covers what's playing.
  */
 class NotificationsTool(private val context: Context) : Tool {
+    override val privateResult = true
+
     override val spec = ToolSpec(
         name = "get_notifications",
         description = "Get the user's current notifications (newest first): app, title, text and age. " +

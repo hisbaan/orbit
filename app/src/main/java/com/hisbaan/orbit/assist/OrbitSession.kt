@@ -207,7 +207,8 @@ class OrbitSession(context: Context) :
         } else {
             Intent(Intent.ACTION_VIEW, Uri.parse(link))
         }
-        EventLog.log("assist", "Opening card link $link")
+        // Weather links carry the location.
+        EventLog.log("assist", "Opening card link ${EventLog.content(link)}")
         hide()
         context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }

@@ -123,7 +123,7 @@ class OnDeviceStt(context: Context) {
 
                     override fun onResults(results: Bundle) {
                         val text = best(results)?.takeIf { it.isNotBlank() } ?: lastPartial
-                        EventLog.log("stt", "Result: ${text?.let { "\"$it\"" } ?: "none"}")
+                        EventLog.log("stt", "Result: ${EventLog.content(text?.let { "\"$it\"" })}")
                         result.complete(if (text.isNullOrBlank()) Result.NoSpeech else Result.Text(text))
                     }
 

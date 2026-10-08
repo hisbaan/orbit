@@ -2,6 +2,7 @@ package com.hisbaan.orbit.weather
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
@@ -37,7 +38,8 @@ class GoogleWeather(private val client: HttpClient, private val apiKey: String) 
 
     private suspend fun lookup(path: String, latitude: Double, longitude: Double, imperial: Boolean, vararg extra: Pair<String, Int>): JsonObject {
         val response = client.get("https://weather.googleapis.com/v1/$path") {
-            parameter("key", apiKey)
+            // In a header, not the URL: request errors quote the URL, and those get logged.
+            header("X-Goog-Api-Key", apiKey)
             parameter("location.latitude", latitude)
             parameter("location.longitude", longitude)
             parameter("unitsSystem", if (imperial) "IMPERIAL" else "METRIC")

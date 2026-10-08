@@ -35,6 +35,21 @@ object EventLog {
     private val sinks = CopyOnWriteArrayList<Sink>()
     private var seq = 0L
 
+    /**
+     * Whether entries may hold what the user said and has: transcripts, replies, tool arguments
+     * and results. The app turns it on for debug builds only; release logs keep the timings and
+     * sizes but not the words. See [content].
+     */
+    @Volatile
+    var recordContent = false
+
+    /** [text] for a log line if [recordContent], else only its length. */
+    fun content(text: String?): String = when {
+        text == null -> "none"
+        recordContent -> text
+        else -> "<${text.length} chars>"
+    }
+
     fun addSink(sink: Sink) {
         sinks += sink
     }

@@ -24,6 +24,12 @@ interface Tool {
      */
     val confirms: Boolean get() = false
 
+    /**
+     * The result holds other people's words or what's on screen (notifications, screen text),
+     * so the agent never logs it, only its size, even where the log keeps content.
+     */
+    val privateResult: Boolean get() = false
+
     /** Runs the tool. Throwing is fine: the agent reports the error back to the model. */
     suspend fun invoke(args: JsonObject): ToolOutcome
 }

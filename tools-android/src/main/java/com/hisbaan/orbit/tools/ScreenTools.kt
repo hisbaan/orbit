@@ -97,6 +97,8 @@ object ScreenContext {
 
 /** Lets the model look at the app behind the overlay. */
 class ReadScreenTool(private val context: Context) : Tool {
+    override val privateResult = true
+
     override val spec = ToolSpec(
         name = "read_screen",
         description = "Read what's on the user's screen: the app open behind Orbit, as text, and optionally a " +

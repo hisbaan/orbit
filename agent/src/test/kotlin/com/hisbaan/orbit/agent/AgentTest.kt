@@ -1,5 +1,6 @@
 package com.hisbaan.orbit.agent
 
+import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.providers.ChatImage
 import com.hisbaan.orbit.providers.ChatMessage
 import com.hisbaan.orbit.providers.ChatRequest
@@ -301,5 +302,35 @@ class AgentTest {
 
         agent.respond("yes", FakeTransport(confirm("2", "c1")), "m")
         assertEquals(listOf("Alex"), phone.dialed)
+    }
+
+    @Test
+    fun `logs keep sizes, not content, unless allowed, and never private results`() = runTest {
+        val screen = object : Tool {
+            override val privateResult = true
+            override val spec = ToolSpec("read_screen", "test tool", objectSchema())
+            override suspend fun invoke(args: JsonObject) = ToolOutcome("Dinner with Sam at 7")
+        }
+        val weather = RecordingTool("get_weather") { ToolOutcome("14°C in Toronto") }
+        val agent = Agent(listOf(screen, weather), systemPrompt = { "sys" })
+        val transport = FakeTransport(
+            calls(ToolCall("1", "read_screen", "{}"), ToolCall("2", "get_weather", """{"place":"Toronto"}""")),
+            text("ok"),
+            calls(ToolCall("3", "read_screen", "{}"), ToolCall("4", "get_weather", """{"place":"Toronto"}""")),
+            text("ok"),
+        )
+        fun toolLines() = EventLog.entries.value.filter { it.tag == "tool" }.takeLast(2).map { it.message }
+
+        val before = EventLog.recordContent
+        try {
+            EventLog.recordContent = false
+            agent.respond("x", transport, "m")
+            assertEquals(listOf("read_screen(<2 chars>) -> <20 chars>", "get_weather(<19 chars>) -> <15 chars>"), toolLines())
+            EventLog.recordContent = true
+            agent.respond("x", transport, "m")
+            assertEquals(listOf("read_screen({}) -> <20 chars>", "get_weather({\"place\":\"Toronto\"}) -> 14°C in Toronto"), toolLines())
+        } finally {
+            EventLog.recordContent = before
+        }
     }
 }

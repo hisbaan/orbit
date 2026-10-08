@@ -1,6 +1,7 @@
 package com.hisbaan.orbit
 
 import android.app.Application
+import android.content.pm.ApplicationInfo
 import com.hisbaan.orbit.agent.ShowInfoCardTool
 import com.hisbaan.orbit.assist.UnlockActivity
 import com.hisbaan.orbit.assistant.Assistant
@@ -136,6 +137,7 @@ class OrbitApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        EventLog.recordContent = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         EventLog.addSink(LogcatSink)
         EventLog.addSink(FileSink(filesDir))
         loaded // start loading settings now, not at the first turn

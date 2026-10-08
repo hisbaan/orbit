@@ -77,7 +77,7 @@ class Agent(
                 return ToolOutcome("Not done: the user hasn't answered yet. Ask them, and confirm only once they agree.")
             }
             held -= ref
-            EventLog.log("agent", "Confirmed by the user: ${waiting.action.description}")
+            EventLog.log("agent", "Confirmed by the user: ${EventLog.content(waiting.action.description)}")
             return waiting.action.run()
         }
     }
@@ -193,7 +193,7 @@ class Agent(
             return ToolOutcome("Error: arguments were not valid JSON") to null
         }
         val modelSays = (parsed[CONFIRMATION_ARG] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        val outcome = runTool(call) { tool.invoke(JsonObject(parsed - CONFIRMATION_ARG)) }
+        val outcome = runTool(call, tool.privateResult) { tool.invoke(JsonObject(parsed - CONFIRMATION_ARG)) }
         return hold(call, outcome) to modelSays
     }
 
@@ -202,7 +202,7 @@ class Agent(
         val action = outcome.pending ?: return outcome
         val ref = "c${++lastRef}"
         held[ref] = Held(userMessages, action)
-        EventLog.log("agent", "Waiting for the user's yes ($ref): ${action.description}")
+        EventLog.log("agent", "Waiting for the user's yes ($ref): ${EventLog.content(action.description)}")
         return outcome.copy(
             result = outcome.result + "\nOnce the user agrees, call $CONFIRM_TOOL with ref '$ref'. If they change " +
                 "anything, call ${call.name} again instead.",
@@ -210,15 +210,18 @@ class Agent(
         )
     }
 
-    private suspend fun runTool(call: ToolCall, block: suspend () -> ToolOutcome): ToolOutcome {
+    private suspend fun runTool(call: ToolCall, privateResult: Boolean = false, block: suspend () -> ToolOutcome): ToolOutcome {
+        val args = EventLog.content(call.argumentsJson)
         return try {
             block().also {
-                EventLog.log("tool", "${call.name}(${call.argumentsJson}) -> ${it.result}${it.afterTurn?.let { a -> " [after turn: ${a.description}]" } ?: ""}")
+                val result = if (privateResult) "<${it.result.length} chars>" else EventLog.content(it.result)
+                val after = it.afterTurn?.let { a -> " [after turn: ${EventLog.content(a.description)}]" }.orEmpty()
+                EventLog.log("tool", "${call.name}($args) -> $result$after")
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            EventLog.log("tool", "${call.name}(${call.argumentsJson}) failed: $e")
+            EventLog.log("tool", "${call.name}($args) failed: ${e::class.simpleName}: ${EventLog.content(e.message)}")
             ToolOutcome("Error: ${e.message ?: e::class.simpleName}")
         }
     }

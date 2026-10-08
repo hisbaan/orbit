@@ -284,7 +284,7 @@ class Assistant(
                     listener.set(null)
                     audio.close()
                 }
-                step("Heard: $heard")
+                step("Heard: ${if (heard is OnDeviceStt.Result.Text) EventLog.content(heard.text) else heard}")
                 PcmPlayer.play(Earcons.done(sounds, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, usage)
                 when (heard) {
                     is OnDeviceStt.Result.Text -> heard.text
@@ -381,11 +381,11 @@ class Assistant(
             afterTurn += later
             if (now.isNotEmpty()) {
                 // Silent actions (opening an app, starting navigation) start with the reply.
-                step("Starting with the reply: ${now.joinToString { it.description }}")
+                step("Starting with the reply: ${EventLog.content(now.joinToString { it.description })}")
                 _dismissRequests.tryEmit(Unit)
                 scope.launch { runAfterTurn(now) }
             }
-            step("Reply: ${result.reply}")
+            step("Reply: ${EventLog.content(result.reply)}")
             chunker.flush()?.let(::enqueue)
             if (shown.isBlank()) {
                 val fallback = result.reply.ifBlank { "Done." }
@@ -432,16 +432,16 @@ class Assistant(
                 val dismiss = keyguardDismisser
                 val unlocked = dismiss != null && dismiss()
                 if (!unlocked) {
-                    EventLog.log("turn", "Skipped '${action.description}': device locked")
+                    EventLog.log("turn", "Skipped '${EventLog.content(action.description)}': device locked")
                     _state.update { it.copy(error = "Unlock your phone to ${action.description}.") }
                     continue
                 }
             }
             try {
                 action.run()
-                EventLog.log("turn", "After turn: ${action.description}")
+                EventLog.log("turn", "After turn: ${EventLog.content(action.description)}")
             } catch (e: Exception) {
-                EventLog.log("turn", "After turn '${action.description}' failed: $e")
+                EventLog.log("turn", "After turn '${EventLog.content(action.description)}' failed: ${e::class.simpleName}")
                 _state.update { it.copy(error = "Couldn't ${action.description}: ${e.message}") }
             }
         }

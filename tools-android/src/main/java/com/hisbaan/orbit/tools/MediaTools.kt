@@ -16,6 +16,7 @@ import android.provider.MediaStore
 import android.view.KeyEvent
 import com.hisbaan.orbit.agent.AfterTurnAction
 import com.hisbaan.orbit.agent.Tool
+import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.agent.ToolOutcome
 import com.hisbaan.orbit.agent.int
 import com.hisbaan.orbit.agent.integerProperty
@@ -270,7 +271,7 @@ class PlayMusicTool(
         } else {
             musicPackage() ?: sessions.target()?.packageName ?: defaultMusicApp()
         }
-        sessions.log("play_music '$query' -> ${pkg ?: "no app"}${named?.let { " (asked for $it)" } ?: ""}")
+        sessions.log("play_music ${EventLog.content(query)} -> ${pkg ?: "no app"}${named?.let { " (asked for $it)" } ?: ""}")
         if (pkg == YOUTUBE_MUSIC) {
             playOnYouTubeMusic(query, args.string("kind"), args.string("artist"))?.let { return it }
         }
@@ -285,7 +286,7 @@ class PlayMusicTool(
                 result,
                 AfterTurnAction("play '$query'", needsUnlock = false) {
                     val controller = sessions.target(app)?.takeIf { it.packageName == app } ?: session
-                    sessions.log("playFromSearch('$query') -> $app")
+                    sessions.log("playFromSearch(${EventLog.content(query)}) -> $app")
                     controller.transportControls.playFromSearch(query, extras)
                 },
                 done = true,
@@ -357,7 +358,7 @@ class PlayMusicTool(
         }
         val pick = YouTubeMusicSearch.pick(results, kind, artist)
             ?: return ToolOutcome("YouTube Music found nothing playable for '$query'.")
-        sessions.log("YouTube Music search '$query' (kind=$kind, artist=$artist) -> ${pick.describe()}")
+        sessions.log("YouTube Music search ${EventLog.content(query)} (kind=$kind) -> ${EventLog.content(pick.describe())}")
         return ToolOutcome(
             "Found ${pick.describe()}. It will start playing after you finish speaking.",
             AfterTurnAction("play ${pick.describe()}", needsUnlock = true) { openInYouTubeMusic(context, pick.playUrl!!) },

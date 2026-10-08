@@ -5,6 +5,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -13,6 +14,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
+import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -26,10 +28,18 @@ class PirateWeather(private val client: HttpClient, private val apiKey: String) 
     override val name = "Pirate Weather"
 
     override suspend fun forecast(latitude: Double, longitude: Double, days: Int, imperial: Boolean, hours: Int): Forecast {
-        val response = client.get("https://api.pirateweather.net/forecast/$apiKey/$latitude,$longitude") {
-            // "ca": °C and km/h, as Open-Meteo's metric; "us": °F and mph.
-            parameter("units", if (imperial) "us" else "ca")
-            parameter("exclude", "minutely,alerts")
+        val response = try {
+            client.get("https://api.pirateweather.net/forecast/$apiKey/$latitude,$longitude") {
+                // "ca": °C and km/h, as Open-Meteo's metric; "us": °F and mph.
+                parameter("units", if (imperial) "us" else "ca")
+                parameter("exclude", "minutely,alerts")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The key is in the URL path (the API takes it nowhere else), and request errors quote
+            // the URL; their messages reach the log and the model.
+            throw IOException("Pirate Weather request failed: ${e::class.simpleName}: ${e.message.orEmpty().replace(apiKey, "<key>")}")
         }
         if (!response.status.isSuccess()) {
             throw IllegalStateException("Pirate Weather failed: HTTP ${response.status.value}: ${response.bodyAsText().take(200)}")
