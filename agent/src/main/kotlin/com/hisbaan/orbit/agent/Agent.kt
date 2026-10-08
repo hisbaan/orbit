@@ -8,6 +8,9 @@ import com.hisbaan.orbit.providers.ChatTransport
 import com.hisbaan.orbit.providers.ToolCall
 import com.hisbaan.orbit.providers.ToolSpec
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -33,6 +36,9 @@ data class AgentResult(
  * History survives for [historyTtlMs] after a turn so a quick follow-up continues the
  * conversation; after that the next turn starts fresh.
  *
+ * Tools run on [toolDispatcher], since many block (content providers, the package manager,
+ * image encoding); the callbacks run on the caller's.
+ *
  * Actions that need the user's yes come back from tools as [PendingAction]s. They are held
  * here under a short ref and run only through [CONFIRM_TOOL], with that ref, in the user's
  * next message: neither the model nor text it reads can confirm on the user's behalf.
@@ -43,6 +49,7 @@ class Agent(
     private val clock: () -> Long = System::currentTimeMillis,
     private val historyTtlMs: Long = 2 * 60_000,
     private val maxSteps: Int = 6,
+    private val toolDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val history = mutableListOf<ChatMessage>()
     private var lastTurnEndedAt = 0L
@@ -213,7 +220,7 @@ class Agent(
     private suspend fun runTool(call: ToolCall, privateResult: Boolean = false, block: suspend () -> ToolOutcome): ToolOutcome {
         val args = EventLog.content(call.argumentsJson)
         return try {
-            block().also {
+            withContext(toolDispatcher) { block() }.also {
                 val result = if (privateResult) "<${it.result.length} chars>" else EventLog.content(it.result)
                 val after = it.afterTurn?.let { a -> " [after turn: ${EventLog.content(a.description)}]" }.orEmpty()
                 EventLog.log("tool", "${call.name}($args) -> $result$after")

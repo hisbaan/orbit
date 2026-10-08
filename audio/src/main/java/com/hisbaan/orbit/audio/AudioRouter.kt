@@ -7,7 +7,9 @@ import android.bluetooth.BluetoothHeadset
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.SystemClock
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /** The different ways to get a Bluetooth headset's mic routed to us. See PLAN.md §1. */
 enum class RouteStrategy(val label: String) {
@@ -184,35 +186,33 @@ class AudioRouter(
         EventLog.log("route", "startBluetoothSco() called")
     }
 
-    /** Polls until the audio policy has switched the communication device to a BT headset. */
-    private suspend fun awaitRoute(t0: Long): Long? {
+    /**
+     * Polls until the audio policy has switched the communication device to a BT headset. Polls
+     * run on IO: each is a call into the audio or Bluetooth service, every [POLL_MS].
+     */
+    private suspend fun awaitRoute(t0: Long): Long? = withContext(Dispatchers.IO) {
         val deadline = t0 + ROUTE_TIMEOUT_MS
         while (SystemClock.elapsedRealtime() < deadline) {
             if (audioManager.communicationDevice?.let(::isBluetoothVoiceDevice) == true) {
-                return SystemClock.elapsedRealtime() - t0
+                return@withContext SystemClock.elapsedRealtime() - t0
             }
             delay(POLL_MS)
         }
         EventLog.log("route", "Communication device not a BT headset within ${ROUTE_TIMEOUT_MS}ms")
-        return null
+        null
     }
+
+    /** Whether the route's HFP audio link is up right now; null when the route has no HFP device. */
+    fun isHfpAudioUp(route: Route): Boolean? = route.hfpDevice?.let(headsetProfile::isAudioConnected)
 
     /**
      * Polls until the HFP SCO audio link is connected. Only meaningful while a stream is
      * running (see class doc). Returns ms waited, 0 for LE Audio (no HFP link), null on timeout.
      */
-    /** Whether the route's HFP audio link is up right now; null when the route has no HFP device. */
-    fun isHfpAudioUp(route: Route): Boolean? = route.hfpDevice?.let(headsetProfile::isAudioConnected)
-
     suspend fun awaitHfpAudio(route: Route, timeoutMs: Long): Long? {
         if (route.strategy == RouteStrategy.NONE) return null
         val device = route.hfpDevice ?: return 0
-        val t0 = SystemClock.elapsedRealtime()
-        while (SystemClock.elapsedRealtime() - t0 < timeoutMs) {
-            if (headsetProfile.isAudioConnected(device)) return SystemClock.elapsedRealtime() - t0
-            delay(POLL_MS)
-        }
-        return null
+        return awaitHfpAudioState(device, up = true, timeoutMs)
     }
 
     /**
@@ -223,12 +223,17 @@ class AudioRouter(
     suspend fun awaitHfpAudioDown(route: Route, timeoutMs: Long): Long? {
         if (route.strategy == RouteStrategy.NONE) return 0
         val device = route.hfpDevice ?: return 0
+        return awaitHfpAudioState(device, up = false, timeoutMs)
+    }
+
+    /** Polls (on IO) until [device]'s HFP audio link is [up] or not; ms waited, or null on timeout. */
+    private suspend fun awaitHfpAudioState(device: BluetoothDevice, up: Boolean, timeoutMs: Long): Long? = withContext(Dispatchers.IO) {
         val t0 = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - t0 < timeoutMs) {
-            if (!headsetProfile.isAudioConnected(device)) return SystemClock.elapsedRealtime() - t0
+            if (headsetProfile.isAudioConnected(device) == up) return@withContext SystemClock.elapsedRealtime() - t0
             delay(POLL_MS)
         }
-        return null
+        null
     }
 
     private companion object {

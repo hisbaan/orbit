@@ -333,12 +333,8 @@ class PlayMusicTool(
     }
 
     /** Installed apps that take play-from-search requests, as (label, package). */
-    private fun musicApps(): List<Pair<String, String>> {
-        val pm = context.packageManager
-        return pm.queryIntentActivities(Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH), 0)
-            .map { it.loadLabel(pm).toString() to it.activityInfo.packageName }
-            .distinctBy { it.second }
-    }
+    private fun musicApps(): List<Pair<String, String>> =
+        InstalledApps.handling(context, Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH))
 
     /** The app handling play-from-search by default, or null if the user hasn't picked one. */
     private fun defaultMusicApp(): String? = context.packageManager

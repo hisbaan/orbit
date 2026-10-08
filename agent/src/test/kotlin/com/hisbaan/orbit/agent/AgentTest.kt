@@ -8,12 +8,14 @@ import com.hisbaan.orbit.providers.ChatResponse
 import com.hisbaan.orbit.providers.ChatTransport
 import com.hisbaan.orbit.providers.ToolCall
 import com.hisbaan.orbit.providers.ToolSpec
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.Executors
 
 class AgentTest {
     /** Replays canned responses and records every request. */
@@ -331,6 +333,28 @@ class AgentTest {
             assertEquals(listOf("read_screen({}) -> <20 chars>", "get_weather({\"place\":\"Toronto\"}) -> 14°C in Toronto"), toolLines())
         } finally {
             EventLog.recordContent = before
+        }
+    }
+
+    @Test
+    fun `tools run on the tool dispatcher, callbacks on the caller's thread`() = runTest {
+        val executor = Executors.newSingleThreadExecutor { Thread(it, "tools") }
+        try {
+            var toolThread = ""
+            var cardThread = ""
+            val tool = RecordingTool("show") {
+                toolThread = Thread.currentThread().name
+                ToolOutcome("Shown.", cards = listOf(Card.Info("t", null, emptyList())))
+            }
+            val agent = Agent(listOf(tool), systemPrompt = { "sys" }, toolDispatcher = executor.asCoroutineDispatcher())
+            val caller = Thread.currentThread().name
+
+            agent.respond("x", FakeTransport(calls(ToolCall("1", "show", "{}")), text("ok")), "m", onCard = { cardThread = Thread.currentThread().name })
+
+            assertEquals("tools", toolThread)
+            assertEquals(caller, cardThread)
+        } finally {
+            executor.shutdown()
         }
     }
 }

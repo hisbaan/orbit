@@ -196,7 +196,7 @@ class Assistant(
                 listener.get()?.trySend(samples.copyOf(count))
             }
         }
-        val linkWatch = scope.launch { watchHfpLink(route, step) }
+        val linkWatch = scope.launch(Dispatchers.IO) { watchHfpLink(route, step) }
 
         val afterTurn = mutableListOf<AfterTurnAction>()
         try {
@@ -407,7 +407,7 @@ class Assistant(
         return address?.let { config.headsetSounds[it] } ?: config.defaultSounds
     }
 
-    /** Logs when the headset drops the HFP audio link mid-turn, e.g. its button ending voice recognition. */
+    /** Logs when the headset drops the HFP audio link mid-turn, e.g. its button ending voice recognition. Polls; run it off Main. */
     private suspend fun watchHfpLink(route: AudioRouter.Route, step: (String) -> Unit) {
         if (!route.isBluetooth) return
         var wasUp = false

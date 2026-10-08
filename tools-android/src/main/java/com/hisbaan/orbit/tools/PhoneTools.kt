@@ -132,8 +132,7 @@ class OpenAppTool(private val context: Context) : Tool {
     override suspend fun invoke(args: JsonObject): ToolOutcome {
         val name = args.requireString("name")
         val pm = context.packageManager
-        val apps = pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)
-            .map { it.loadLabel(pm).toString() to it.activityInfo.packageName }
+        val apps = InstalledApps.handling(context, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER))
         val match = apps.firstOrNull { it.first.equals(name, ignoreCase = true) }
             ?: apps.filter { it.first.contains(name, ignoreCase = true) }.singleOrNull()
             ?: return ToolOutcome(
