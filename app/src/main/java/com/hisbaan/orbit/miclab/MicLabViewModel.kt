@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hisbaan.orbit.OrbitApp
 import com.hisbaan.orbit.audio.AudioFocus
 import com.hisbaan.orbit.audio.AudioMonitor
 import com.hisbaan.orbit.audio.AudioRouter
@@ -21,12 +22,10 @@ import com.hisbaan.orbit.audio.CaptureBuffer
 import com.hisbaan.orbit.audio.CaptureSource
 import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.audio.FocusMode
-import com.hisbaan.orbit.audio.HeadsetProfile
 import com.hisbaan.orbit.audio.MicCapture
 import com.hisbaan.orbit.audio.PcmPlayer
 import com.hisbaan.orbit.audio.PlaybackUsage
 import com.hisbaan.orbit.audio.RouteStrategy
-import com.hisbaan.orbit.speech.TtsSpeaker
 import com.hisbaan.orbit.audio.audioModeName
 import com.hisbaan.orbit.audio.describe
 import com.hisbaan.orbit.audio.label
@@ -78,10 +77,11 @@ data class MicLabState(
 class MicLabViewModel(app: Application) : AndroidViewModel(app) {
     private val audioManager = app.getSystemService(AudioManager::class.java)
     private val prefs = app.getSharedPreferences("miclab", Context.MODE_PRIVATE)
-    private val headsetProfile = HeadsetProfile(app)
+    // The app's, shared with the assistant: one HFP proxy and one TTS engine.
+    private val headsetProfile = (app as OrbitApp).headsetProfile
     private val router = AudioRouter(audioManager, headsetProfile)
     private val monitor = AudioMonitor(app, audioManager) { refresh() }
-    private val tts = TtsSpeaker(app)
+    private val tts = (app as OrbitApp).tts
     private val focus = AudioFocus(audioManager)
 
     private val _state = MutableStateFlow(MicLabState(settings = loadSettings()))
@@ -109,8 +109,6 @@ class MicLabViewModel(app: Application) : AndroidViewModel(app) {
         route?.let(router::release)
         focus.release()
         monitor.stop()
-        headsetProfile.close()
-        tts.shutdown()
     }
 
     // region Settings

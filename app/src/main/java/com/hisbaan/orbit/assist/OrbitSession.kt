@@ -1,10 +1,11 @@
 package com.hisbaan.orbit.assist
 
+import android.app.KeyguardManager
 import android.bluetooth.BluetoothDevice
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import android.os.Bundle
 import android.service.voice.VoiceInteractionSession
 import android.view.View
@@ -16,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
+import androidx.core.net.toUri
 import androidx.core.os.BundleCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
@@ -202,22 +204,36 @@ class OrbitSession(context: Context) :
         cardVisibility.targetState = false
     }
 
-    private fun openApp() {
-        hide()
-        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
+    private fun openApp() = leaveFor(Intent(context, MainActivity::class.java), "Orbit")
 
     /** Opens a card's link: `app:<package>` launches that app, anything else is a web URL. */
     private fun openLink(link: String) {
         val intent = if (link.startsWith("app:")) {
             context.packageManager.getLaunchIntentForPackage(link.removePrefix("app:")) ?: return
         } else {
-            Intent(Intent.ACTION_VIEW, Uri.parse(link))
+            Intent(Intent.ACTION_VIEW, link.toUri())
         }
         // Weather links carry the location.
-        EventLog.log("assist", "Opening card link ${EventLog.content(link)}")
+        leaveFor(intent, "card link ${EventLog.content(link)}")
+    }
+
+    /**
+     * Hides the overlay and opens [intent], asking the user to unlock first if the phone is
+     * locked (otherwise the app would open behind the lock screen and nothing would seem to
+     * happen). Runs in the app's scope: a hidden session may be destroyed while the user unlocks.
+     */
+    private fun leaveFor(intent: Intent, what: String) {
+        EventLog.log("assist", "Opening $what")
         hide()
-        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val app = app
+        app.appScope.launch {
+            if (app.getSystemService(KeyguardManager::class.java).isKeyguardLocked && !UnlockActivity.request(app)) return@launch
+            try {
+                app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: ActivityNotFoundException) {
+                EventLog.log("assist", "Nothing opens $what")
+            }
+        }
     }
 
     companion object {

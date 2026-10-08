@@ -53,11 +53,11 @@ class Assistant(
     private val httpClient: HttpClient,
     tools: List<Tool>,
     private val tts: TtsSpeaker,
+    private val headsetProfile: HeadsetProfile,
 ) {
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(AudioManager::class.java)
     private val keyguardManager = appContext.getSystemService(KeyguardManager::class.java)
-    private val headsetProfile = HeadsetProfile(appContext)
     private val router = AudioRouter(audioManager, headsetProfile)
     private val focus = AudioFocus(audioManager)
     private val stt = OnDeviceStt(appContext)

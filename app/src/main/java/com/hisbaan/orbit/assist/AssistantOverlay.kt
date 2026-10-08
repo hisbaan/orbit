@@ -3,6 +3,7 @@ package com.hisbaan.orbit.assist
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
@@ -150,24 +151,30 @@ private fun Card(state: AssistantState, actions: OverlayActions) {
 
 /**
  * A gradient edge that follows the card's rounded corners and turns slowly while Orbit is
- * busy; when idle it settles to a plain hairline.
+ * busy; when idle it settles to a plain hairline. It only animates while busy: the card stays
+ * up after a turn, and an endless animation would redraw it every frame for as long as it does.
  */
 private fun Modifier.activityGlow(phase: Phase): Modifier = composed {
     val busy = phase != Phase.IDLE
     val colors = MaterialTheme.colorScheme
     val strength by animateFloatAsState(if (busy) 1f else 0f, tween(400), label = "glow")
-    val angle by rememberInfiniteTransition(label = "glow").animateFloat(
-        initialValue = 0f,
-        targetValue = (2 * Math.PI).toFloat(),
-        animationSpec = infiniteRepeatable(tween(if (phase == Phase.THINKING) 1_600 else 3_200, easing = LinearEasing)),
-        label = "angle",
-    )
+    val angle = remember { Animatable(0f) }
+    val period = if (phase == Phase.THINKING) 1_600 else 3_200
+    LaunchedEffect(busy, period) {
+        if (!busy) return@LaunchedEffect
+        // One turn at a time from wherever it is, so a change of speed doesn't jump.
+        while (true) {
+            val from = angle.value % FULL_TURN
+            angle.snapTo(from)
+            angle.animateTo(from + FULL_TURN, tween(period, easing = LinearEasing))
+        }
+    }
     val gradient = listOf(colors.primary, colors.tertiary, colors.secondary, colors.primary)
     val idle = colors.outlineVariant
     drawWithCache {
         val outline = CardShape.createOutline(size, layoutDirection, this)
         val radius = maxOf(size.width, size.height) / 2
-        val direction = Offset(cos(angle), sin(angle)) * radius
+        val direction = Offset(cos(angle.value), sin(angle.value)) * radius
         val middle = Offset(size.width / 2, size.height / 2)
         val brush = Brush.linearGradient(gradient, start = middle - direction, end = middle + direction)
         onDrawWithContent {
@@ -370,3 +377,5 @@ private fun toolLabel(tool: String): String = when {
         else -> tool.replace('_', ' ').replaceFirstChar { it.uppercase() }
     }
 }
+
+private const val FULL_TURN = (2 * Math.PI).toFloat()

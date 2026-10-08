@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hisbaan.orbit.OrbitApp
+import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.audio.EarconStyle
 import com.hisbaan.orbit.audio.Earcons
 import com.hisbaan.orbit.audio.MicCapture
@@ -70,6 +71,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = (app as OrbitApp).settings
     private val httpClient = (app as OrbitApp).httpClient
     private val tts = (app as OrbitApp).tts
+    private val appScope = (app as OrbitApp).appScope
     private var preview: Job? = null
 
     private val _state = MutableStateFlow(SettingsUiState(musicApps = findMusicApps()))
@@ -86,17 +88,22 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun edit(transform: (AppSettings) -> AppSettings) =
         _state.update { s -> s.copy(draft = s.draft?.let(transform), dirty = true, status = null) }
 
-    /** Edits that apply immediately (switches, pickers). */
+    /**
+     * Edits that apply immediately (switches, pickers). Only this change is saved: text fields
+     * edited but not yet saved stay unsaved (and the Save button stays on). It's applied to the
+     * stored settings, not the draft, so it can't overwrite anything saved meanwhile (a Home
+     * Assistant sign-in).
+     */
     fun editAndSave(transform: (AppSettings) -> AppSettings) {
-        edit(transform)
-        save(quiet = true)
+        _state.update { s -> s.copy(draft = s.draft?.let(transform), status = null) }
+        viewModelScope.launch { repo.update(transform) }
     }
 
-    fun save(quiet: Boolean = false) {
+    fun save() {
         val draft = _state.value.draft ?: return
         viewModelScope.launch {
             repo.update { draft }
-            _state.update { it.copy(dirty = false, status = if (quiet) it.status else "Saved") }
+            _state.update { it.copy(dirty = false, status = "Saved") }
         }
     }
 
@@ -177,11 +184,22 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun disconnectHa() {
         val draft = _state.value.draft ?: return
         val credential = draft.homeAssistant
+        // Forget it here first: revoking needs the server, which may be out of reach (off the LAN).
         viewModelScope.launch {
-            // Best effort: drop the sign-in on the server too.
-            if (credential is HaCredential.OAuth) runCatching { HaAuth.revoke(httpClient, draft.homeAssistantUrl, credential.refreshToken) }
             repo.update { it.copy(homeAssistant = null) }
             _state.update { s -> s.copy(draft = s.draft?.copy(homeAssistant = null), haStatus = "Disconnected.") }
+        }
+        // Then drop the sign-in on the server too, best effort, even if Settings closes meanwhile.
+        if (credential is HaCredential.OAuth) {
+            appScope.launch {
+                try {
+                    HaAuth.revoke(httpClient, draft.homeAssistantUrl, credential.refreshToken)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    EventLog.log("settings", "Couldn't revoke the Home Assistant sign-in: ${e::class.simpleName}")
+                }
+            }
         }
     }
 

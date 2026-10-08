@@ -182,7 +182,8 @@ class MainActivity : ComponentActivity() {
         }.map { it.second }
         isDefaultAssistant = getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
         hasMediaAccess = app.mediaSessions.hasAccess
-        micLab.refresh()
+        // Only while it's open: the first touch builds Mic Lab, which starts listening to audio events.
+        if (screen == Screen.MIC_LAB) micLab.refresh()
     }
 
     private fun requestPermissions() {

@@ -7,6 +7,7 @@ import com.hisbaan.orbit.assist.OrbitSession
 import com.hisbaan.orbit.assist.OrbitVoiceInteractionService
 import com.hisbaan.orbit.assist.UnlockActivity
 import com.hisbaan.orbit.assistant.Assistant
+import com.hisbaan.orbit.audio.HeadsetProfile
 import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.homeassistant.HaCredential
 import com.hisbaan.orbit.homeassistant.HomeAssistant
@@ -118,11 +119,14 @@ class OrbitApp : Application() {
         } + HomeTools(::homeAssistant, { Locale.getDefault().language }).all
     }
 
-    /** Shared so Settings can list and preview the voices the assistant speaks with. */
+    /** Shared so Settings can list and preview the voices the assistant speaks with, and Mic Lab test them. */
     val tts by lazy { TtsSpeaker(this) }
 
+    /** The Bluetooth headset profile proxy, bound once for the assistant and Mic Lab. */
+    val headsetProfile by lazy { HeadsetProfile(this) }
+
     val assistant by lazy {
-        Assistant(context = this, settings = settings, httpClient = httpClient, tools = tools, tts = tts).apply {
+        Assistant(context = this, settings = settings, httpClient = httpClient, tools = tools, tts = tts, headsetProfile = headsetProfile).apply {
             keyguardDismisser = { UnlockActivity.request(this@OrbitApp) }
             overlay = object : Assistant.Overlay {
                 override val isShown get() = OrbitSession.isShown
