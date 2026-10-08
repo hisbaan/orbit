@@ -26,6 +26,37 @@ class TtsSpeaker(context: Context) {
         ready.complete(ok)
     }
 
+    /**
+     * Utterances still being spoken, by id, across every caller. The engine has one progress
+     * listener, so it's set once here: per-call listeners replaced each other when calls
+     * overlapped (a turn's reply speaker waits from the start of the turn; an unlock prompt
+     * speaks meanwhile), and the first caller's utterances never heard they were done.
+     */
+    private val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+
+    init {
+        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String) = Unit
+            override fun onDone(utteranceId: String) {
+                pending.remove(utteranceId)?.complete(true)
+            }
+
+            override fun onStop(utteranceId: String, interrupted: Boolean) {
+                pending.remove(utteranceId)?.complete(false)
+            }
+
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String) {
+                pending.remove(utteranceId)?.complete(false)
+            }
+
+            override fun onError(utteranceId: String, errorCode: Int) {
+                EventLog.log("tts", "Utterance error $errorCode")
+                pending.remove(utteranceId)?.complete(false)
+            }
+        })
+    }
+
     /** The voice to speak with, by [Voice.getName]; null or not installed uses the engine's default. */
     @Volatile
     var voiceName: String? = null
@@ -45,34 +76,14 @@ class TtsSpeaker(context: Context) {
         if (!ready.await()) return false
         tts.setAudioAttributes(usage.speechAttributes())
         applyVoice()
-        val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
-        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String) = Unit
-            override fun onDone(utteranceId: String) {
-                pending[utteranceId]?.complete(true)
-            }
-
-            override fun onStop(utteranceId: String, interrupted: Boolean) {
-                pending[utteranceId]?.complete(false)
-            }
-
-            @Deprecated("Deprecated in Java")
-            override fun onError(utteranceId: String) {
-                pending[utteranceId]?.complete(false)
-            }
-
-            override fun onError(utteranceId: String, errorCode: Int) {
-                EventLog.log("tts", "Utterance error $errorCode")
-                pending[utteranceId]?.complete(false)
-            }
-        })
-
         val queued = mutableListOf<CompletableDeferred<Boolean>>()
+        val ids = mutableListOf<String>()
         try {
             for (sentence in sentences) {
                 val id = UUID.randomUUID().toString()
                 val done = CompletableDeferred<Boolean>()
                 pending[id] = done
+                ids += id
                 // The first utterance flushes anything left over from an earlier turn.
                 val mode = if (queued.isEmpty()) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
                 if (tts.speak(sentence, mode, null, id) != TextToSpeech.SUCCESS) {
@@ -89,6 +100,8 @@ class TtsSpeaker(context: Context) {
         } catch (e: CancellationException) {
             if (queued.isNotEmpty()) tts.stop()
             throw e
+        } finally {
+            ids.forEach(pending::remove) // any that timed out or were cut short
         }
     }
 
