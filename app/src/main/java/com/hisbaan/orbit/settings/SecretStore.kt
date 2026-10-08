@@ -37,7 +37,16 @@ object SecretStore {
         null
     }
 
-    private fun key(): SecretKey {
+    private var cachedKey: SecretKey? = null
+
+    /**
+     * Loaded from the keystore once. Synchronized so two first uses can't each generate a key,
+     * the second replacing the first and leaving whatever it encrypted unreadable.
+     */
+    @Synchronized
+    private fun key(): SecretKey = cachedKey ?: loadOrCreateKey().also { cachedKey = it }
+
+    private fun loadOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {

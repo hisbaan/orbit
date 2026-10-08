@@ -121,10 +121,6 @@ class Assistant(
     @Volatile
     var keyguardDismisser: (suspend () -> Boolean)? = null
 
-    /** Waits until settings tools read synchronously have loaded (see OrbitApp). */
-    @Volatile
-    var settingsReady: (suspend () -> Unit)? = null
-
     init {
         // Bind the HFP proxy now so a headset trigger doesn't wait for it.
         scope.launch { headsetProfile.get() }
@@ -377,7 +373,6 @@ class Assistant(
         }
 
         try {
-            settingsReady?.invoke()
             val result = try {
                 agent.respond(
                     text,

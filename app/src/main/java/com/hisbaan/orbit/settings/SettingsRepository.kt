@@ -12,9 +12,13 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.hisbaan.orbit.audio.EarconStyle
 import com.hisbaan.orbit.homeassistant.HaCredential
 import com.hisbaan.orbit.tools.SavedPlaylist
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -64,7 +68,11 @@ enum class WeatherSource(val label: String, val about: String) {
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
-class SettingsRepository(context: Context) {
+/**
+ * The app's settings. [latest] is the one copy everything reads: loaded once when the
+ * repository is created (secrets decrypted then, not on every read) and kept current.
+ */
+class SettingsRepository(context: Context, scope: CoroutineScope) {
     private val store = context.applicationContext.dataStore
 
     private object Keys {
@@ -90,9 +98,11 @@ class SettingsRepository(context: Context) {
         val legacyAlertingDevices = stringSetPreferencesKey("alerting_sound_devices")
     }
 
-    val settings: Flow<AppSettings> = store.data.map(::fromPrefs)
+    /** Null until the first load from disk, which starts as soon as the repository exists. */
+    val latest: StateFlow<AppSettings?> = store.data.map(::fromPrefs).stateIn(scope, SharingStarted.Eagerly, null)
 
-    suspend fun current(): AppSettings = settings.first()
+    /** The current settings, waiting for the first load if it hasn't finished. */
+    suspend fun current(): AppSettings = latest.filterNotNull().first()
 
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         store.edit { prefs ->

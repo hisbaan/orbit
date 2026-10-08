@@ -64,6 +64,8 @@ class DebugToolReceiver : BroadcastReceiver() {
                 } else if (name == "browse") {
                     probeBrowser(app, intent.getStringExtra("pkg") ?: "com.google.android.apps.youtube.music")
                 } else {
+                    // As a turn does: tools that read settings synchronously (Home Assistant) need them loaded.
+                    app.settings.current()
                     val tool = app.tools.firstOrNull { it.spec.name == name }
                         ?: return@launch EventLog.log("debug", "No tool '$name'")
                     val parsed = Json.parseToJsonElement(intent.getStringExtra("args") ?: "{}").jsonObject

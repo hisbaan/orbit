@@ -37,7 +37,6 @@ import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.miclab.MicLabActions
 import com.hisbaan.orbit.miclab.MicLabScreen
 import com.hisbaan.orbit.miclab.MicLabViewModel
-import com.hisbaan.orbit.settings.AppSettings
 import com.hisbaan.orbit.settings.SettingsScreen
 import com.hisbaan.orbit.settings.SettingsViewModel
 import com.hisbaan.orbit.ui.OrbitTheme
@@ -99,11 +98,12 @@ class MainActivity : ComponentActivity() {
     @androidx.compose.runtime.Composable
     private fun AssistantContent() {
         val state by app.assistant.state.collectAsStateWithLifecycle()
-        val settings by app.settings.settings.collectAsStateWithLifecycle(initialValue = AppSettings())
+        val settings by app.settings.latest.collectAsStateWithLifecycle()
         Scaffold { padding ->
             AssistantScreen(
                 state = state,
-                setup = SetupStatus(missingPermissions, isDefaultAssistant, settings.isProviderConfigured, hasMediaAccess),
+                // Not loaded yet counts as configured, so the setup card doesn't flash on launch.
+                setup = SetupStatus(missingPermissions, isDefaultAssistant, settings?.isProviderConfigured ?: true, hasMediaAccess),
                 actions = AssistantActions(
                     talk = { app.assistant.trigger("in-app button", null) },
                     stop = app.assistant::cancel,

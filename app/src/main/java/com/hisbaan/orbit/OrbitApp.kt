@@ -44,16 +44,12 @@ import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.stateIn
 import java.util.Locale
 
 class OrbitApp : Application() {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    val settings by lazy { SettingsRepository(this) }
+    val settings by lazy { SettingsRepository(this, appScope) }
 
     val httpClient by lazy {
         HttpClient(OkHttp) {
@@ -67,20 +63,16 @@ class OrbitApp : Application() {
 
     val mediaSessions by lazy { MediaSessions(this) }
 
-    /**
-     * The latest settings, for tools that read them synchronously (tool lists and descriptions are
-     * built before each model call). Null until the first load; started in [onCreate], and each turn
-     * waits for it ([Assistant.settingsReady]) so a turn right after the process starts doesn't see
-     * blank settings: that hid the Home Assistant tools and the user's playlists.
-     */
-    private val loaded by lazy { settings.settings.stateIn(appScope, SharingStarted.Eagerly, null) }
-
     private var homeAssistantCache: Triple<String, HaCredential?, HomeAssistant?>? = null
 
-    /** The connected Home Assistant, rebuilt only when its settings change (it caches access tokens). */
+    /**
+     * The connected Home Assistant, rebuilt only when its settings change (it caches access tokens).
+     * Read synchronously (tool lists are built before each model call); every turn starts by
+     * loading settings, so they're in by then.
+     */
     @Synchronized
     private fun homeAssistant(): HomeAssistant? {
-        val s = loaded.value ?: return null
+        val s = settings.latest.value ?: return null
         homeAssistantCache?.let { (url, credential, ha) -> if (url == s.homeAssistantUrl && credential == s.homeAssistant) return ha }
         val credential = s.homeAssistant
         val ha = if (s.homeAssistantUrl.isBlank() || credential == null) null else HomeAssistant(httpClient, s.homeAssistantUrl, credential)
@@ -100,11 +92,10 @@ class OrbitApp : Application() {
 
     val tools by lazy {
         listOf(
-            // Read when used, not cached: a cached value is still empty right after the process starts.
             MediaControlTool(this, mediaSessions) { settings.current().musicPackage },
             MediaInfoTool(this, mediaSessions) { settings.current().musicPackage },
             PlayMusicTool(this, mediaSessions, YouTubeMusicSearch(httpClient)) { settings.current().musicPackage },
-            PlaySavedPlaylistTool(this, mediaSessions) { loaded.value?.savedPlaylists.orEmpty() },
+            PlaySavedPlaylistTool(this, mediaSessions) { settings.latest.value?.savedPlaylists.orEmpty() },
             NavigationTool(this),
             SetTimerTool(this),
             SetAlarmTool(this),
@@ -131,7 +122,6 @@ class OrbitApp : Application() {
     val assistant by lazy {
         Assistant(context = this, settings = settings, httpClient = httpClient, tools = tools, tts = tts).apply {
             keyguardDismisser = { UnlockActivity.request(this@OrbitApp) }
-            settingsReady = { loaded.filterNotNull().first() }
         }
     }
 
@@ -140,6 +130,6 @@ class OrbitApp : Application() {
         EventLog.recordContent = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         EventLog.addSink(LogcatSink)
         EventLog.addSink(FileSink(filesDir))
-        loaded // start loading settings now, not at the first turn
+        settings // start loading settings now, not at the first turn
     }
 }
