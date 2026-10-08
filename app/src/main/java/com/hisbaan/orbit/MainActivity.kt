@@ -1,6 +1,7 @@
 package com.hisbaan.orbit
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.app.role.RoleManager
 import android.bluetooth.BluetoothDevice
 import android.content.ClipData
@@ -46,6 +47,7 @@ class MainActivity : ComponentActivity() {
     private enum class Screen { ASSISTANT, SETTINGS, MIC_LAB }
 
     private val app get() = application as OrbitApp
+    private val keyguardManager get() = getSystemService(KeyguardManager::class.java)
     private val micLab: MicLabViewModel by viewModels()
     private val settingsVm: SettingsViewModel by viewModels()
 
@@ -60,12 +62,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Triggers forwarded here (hail test, or Orbit not the active assistant) can arrive
-        // with the phone locked. Opened normally, settings (with the API key) stay behind the lock.
-        if (intent.action in TRIGGER_ACTIONS) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        }
         enableEdgeToEdge()
         if (savedInstanceState == null) handleTrigger(intent, "onCreate")
 
@@ -89,8 +85,9 @@ class MainActivity : ComponentActivity() {
                                 back = { screen = Screen.ASSISTANT },
                                 requestPermissions = ::requestPermissions,
                                 openAssistantSettings = ::openAssistantSettings,
-                                copyLog = ::copyLog,
-                                shareLog = ::shareLog,
+                                // The log holds transcripts and replies; the hail test shows Mic Lab while locked.
+                                copyLog = { whenUnlocked(::copyLog) },
+                                shareLog = { whenUnlocked(::shareLog) },
                             ),
                         )
                     }
@@ -113,8 +110,8 @@ class MainActivity : ComponentActivity() {
                     grantPermissions = ::requestPermissions,
                     openAssistantSettings = ::openAssistantSettings,
                     openMediaAccessSettings = ::openMediaAccessSettings,
-                    openSettings = { screen = Screen.SETTINGS },
-                    openMicLab = { screen = Screen.MIC_LAB },
+                    openSettings = { whenUnlocked { screen = Screen.SETTINGS } },
+                    openMicLab = { whenUnlocked { screen = Screen.MIC_LAB } },
                 ),
                 modifier = Modifier.padding(padding),
             )
@@ -129,12 +126,37 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Belt and braces: Settings holds the API key and sends it to whatever endpoint is typed in.
+        if (screen == Screen.SETTINGS && keyguardManager.isKeyguardLocked) screen = Screen.ASSISTANT
         refreshSetup()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Shown over the lock screen for one forwarded trigger only: once Orbit leaves the
+        // screen (it turns off, the user moves on), the lock screen covers the app again.
+        setShowWhenLocked(false)
+        setTurnScreenOn(false)
+    }
+
+    /** Runs [action] once the device is unlocked, asking for the PIN or fingerprint if it's locked. */
+    private fun whenUnlocked(action: () -> Unit) {
+        if (!keyguardManager.isKeyguardLocked) return action()
+        keyguardManager.requestDismissKeyguard(
+            this,
+            object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() = action()
+            },
+        )
     }
 
     private fun handleTrigger(intent: Intent, via: String) {
         val action = intent.action ?: return
         if (action !in TRIGGER_ACTIONS) return
+        // Triggers forwarded here (hail test, or Orbit not the active assistant) can arrive with
+        // the phone locked. Until onStop; the rest of the app stays behind the lock (whenUnlocked).
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
         val extras = intent.extras?.keySet()?.joinToString().orEmpty()
         val device = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
         EventLog.log(
