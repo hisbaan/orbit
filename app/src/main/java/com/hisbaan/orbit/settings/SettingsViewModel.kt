@@ -187,8 +187,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val credential = draft.homeAssistant
         // Forget it here first: revoking needs the server, which may be out of reach (off the LAN).
         viewModelScope.launch {
-            repo.update { it.copy(homeAssistant = null) }
-            _state.update { s -> s.copy(draft = s.draft?.copy(homeAssistant = null), haStatus = "Disconnected.") }
+            // Also stops asking to sign in again, if this sign-in was lost in a restore.
+            repo.update { it.copy(homeAssistant = null, missingSecrets = it.missingSecrets - Secret.HOME_ASSISTANT) }
+            _state.update { s ->
+                s.copy(draft = s.draft?.let { it.copy(homeAssistant = null, missingSecrets = it.missingSecrets - Secret.HOME_ASSISTANT) }, haStatus = "Disconnected.")
+            }
         }
         // Then drop the sign-in on the server too, best effort, even if Settings closes meanwhile.
         if (credential is HaCredential.OAuth) {

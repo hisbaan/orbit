@@ -28,8 +28,11 @@ data class SetupStatus(
     val isDefaultAssistant: Boolean,
     val providerConfigured: Boolean,
     val hasMediaAccess: Boolean,
+    /** Keys and sign-ins to enter again, e.g. after moving to a new phone ("API key"). */
+    val secretsToReenter: List<String> = emptyList(),
 ) {
-    val complete: Boolean get() = missingPermissions.isEmpty() && isDefaultAssistant && providerConfigured && hasMediaAccess
+    val complete: Boolean
+        get() = missingPermissions.isEmpty() && isDefaultAssistant && providerConfigured && hasMediaAccess && secretsToReenter.isEmpty()
 }
 
 class AssistantActions(
@@ -105,7 +108,10 @@ private fun SetupCard(setup: SetupStatus, actions: AssistantActions) {
                 Text("Allow notification access so Orbit can control music directly (play, shuffle, what's playing) and read your notifications to you.")
                 OutlinedButton(onClick = actions.openMediaAccessSettings) { Text("Notification access") }
             }
-            if (!setup.providerConfigured) {
+            if (setup.secretsToReenter.isNotEmpty()) {
+                Text("Enter again: ${setup.secretsToReenter.joinToString()}. Keys and sign-ins stay on the phone they were entered on, so a backup restores everything but them.")
+                OutlinedButton(onClick = actions.openSettings) { Text("Open settings") }
+            } else if (!setup.providerConfigured) {
                 Text("Add an LLM provider and model.")
                 OutlinedButton(onClick = actions.openSettings) { Text("Open settings") }
             }

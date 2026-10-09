@@ -17,6 +17,7 @@ import com.hisbaan.orbit.audio.EarconStyle
 import com.hisbaan.orbit.audio.HeadsetProfile
 import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.settings.AppSettings
+import com.hisbaan.orbit.settings.Secret
 import com.hisbaan.orbit.settings.SettingsRepository
 import com.hisbaan.orbit.settings.chatTransport
 import com.hisbaan.orbit.speech.OnDeviceStt
@@ -172,7 +173,7 @@ class Assistant(
                 !mic -> emptyList<AfterTurnAction>().also {
                     conversation.say(audio, "Orbit needs microphone permission. Open Orbit to grant it.", error = "Microphone permission missing")
                 }
-                !config.isProviderConfigured -> emptyList<AfterTurnAction>().also { conversation.say(audio, NOT_SET_UP) }
+                !config.isProviderConfigured -> emptyList<AfterTurnAction>().also { conversation.say(audio, notSetUp(config)) }
                 else -> conversation.talk(audio, config.chatTransport(httpClient), config.model, typed, step)
             }
         } finally {
@@ -197,7 +198,7 @@ class Assistant(
             if (config.isProviderConfigured) {
                 conversation.answer(text, config.chatTransport(httpClient), config.model, step)
             } else {
-                emptyList<AfterTurnAction>().also { conversation.say(voice = null, NOT_SET_UP) }
+                emptyList<AfterTurnAction>().also { conversation.say(voice = null, notSetUp(config)) }
             }
         } finally {
             _state.update { it.copy(phase = Phase.IDLE) }
@@ -206,6 +207,9 @@ class Assistant(
         if (afterTurn.isNotEmpty()) _dismissRequests.tryEmit(Unit)
         runAfterTurn(afterTurn)
     }
+
+    private fun notSetUp(config: AppSettings) =
+        if (Secret.API_KEY in config.missingSecrets) NEEDS_API_KEY else NOT_SET_UP
 
     /** A turn's step log: each line stamped with the time since the turn started. */
     private fun stepLog(): (String) -> Unit {
@@ -275,6 +279,7 @@ class Assistant(
         const val UNLOCK_MID_TURN_MS = 20_000L
         const val UNLOCK_AFTER_TURN_MS = 60_000L
 
+        const val NEEDS_API_KEY = "Orbit needs its API key again. Open Orbit's settings to enter it."
         const val NOT_SET_UP = "Orbit isn't set up yet. Add a provider and model in Orbit's settings."
     }
 }

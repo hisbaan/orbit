@@ -14,19 +14,27 @@ import javax.crypto.spec.GCMParameterSpec
  * Encrypts small secrets (API keys) with an AES-GCM key that lives in the Android Keystore,
  * so the stored ciphertext is useless off the device.
  */
-object SecretStore {
+/** Encrypts the settings' secrets; [SecretStore] on the phone, a stand-in in tests. */
+interface SecretCipher {
+    fun encrypt(plain: String): String
+
+    /** Null if it can't be decrypted, e.g. it was encrypted on another phone. */
+    fun decrypt(encoded: String): String?
+}
+
+object SecretStore : SecretCipher {
     private const val KEY_ALIAS = "orbit_secrets_v1"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val IV_BYTES = 12
     private const val TAG_BITS = 128
 
-    fun encrypt(plain: String): String {
+    override fun encrypt(plain: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, key()) }
         val sealed = cipher.iv + cipher.doFinal(plain.toByteArray())
         return Base64.encodeToString(sealed, Base64.NO_WRAP)
     }
 
-    fun decrypt(encoded: String): String? = try {
+    override fun decrypt(encoded: String): String? = try {
         val sealed = Base64.decode(encoded, Base64.NO_WRAP)
         val cipher = Cipher.getInstance(TRANSFORMATION).apply {
             init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, sealed, 0, IV_BYTES))

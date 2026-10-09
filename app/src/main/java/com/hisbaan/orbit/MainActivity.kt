@@ -118,7 +118,13 @@ class MainActivity : ComponentActivity() {
             AssistantScreen(
                 state = state,
                 // Not loaded yet counts as configured, so the setup card doesn't flash on launch.
-                setup = SetupStatus(missingPermissions, isDefaultAssistant, settings?.isProviderConfigured ?: true, hasMediaAccess),
+                setup = SetupStatus(
+                    missingPermissions,
+                    isDefaultAssistant,
+                    settings?.isProviderConfigured ?: true,
+                    hasMediaAccess,
+                    settings?.secretsToReenter?.map { it.label }.orEmpty(),
+                ),
                 actions = assistantActions,
                 modifier = Modifier.padding(padding),
             )
