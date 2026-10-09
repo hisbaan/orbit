@@ -17,6 +17,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 class UnlockActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        showing = this
         setShowWhenLocked(true)
         getSystemService(KeyguardManager::class.java).requestDismissKeyguard(
             this,
@@ -29,7 +30,9 @@ class UnlockActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        pending?.complete(false)
+        // Recreated (rotation): the new instance asks again, so the answer isn't in yet.
+        if (!isChangingConfigurations) pending?.complete(false)
+        if (showing === this) showing = null
         super.onDestroy()
     }
 
@@ -43,7 +46,14 @@ class UnlockActivity : ComponentActivity() {
         @Volatile
         private var pending: CompletableDeferred<Boolean>? = null
 
-        /** Shows the unlock prompt; true once the device is unlocked. */
+        @Volatile
+        private var showing: UnlockActivity? = null
+
+        /**
+         * Shows the unlock prompt; true once the device is unlocked. If the caller stops waiting
+         * (it timed out, or was cancelled) the invisible window goes too, rather than staying
+         * over the screen.
+         */
         suspend fun request(context: Context): Boolean {
             val result = CompletableDeferred<Boolean>()
             pending?.complete(false)
@@ -51,7 +61,14 @@ class UnlockActivity : ComponentActivity() {
             context.startActivity(
                 Intent(context, UnlockActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
             )
-            return withTimeoutOrNull(60_000) { result.await() } ?: false
+            try {
+                return withTimeoutOrNull(60_000) { result.await() } ?: false
+            } finally {
+                if (!result.isCompleted) {
+                    result.complete(false)
+                    showing?.let { it.runOnUiThread { it.finish() } }
+                }
+            }
         }
     }
 }

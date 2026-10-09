@@ -40,6 +40,8 @@ class DebugToolReceiver : BroadcastReceiver() {
         val name = intent.getStringExtra("tool") ?: return
         if (name == "voices") {
             // Lists the TTS engine's English voices: name, quality, latency, network, installed.
+            // goAsync keeps the process alive until the engine has answered.
+            val done = goAsync()
             lateinit var tts: android.speech.tts.TextToSpeech
             tts = android.speech.tts.TextToSpeech(app) {
                 val voices = tts.voices.orEmpty().filter { it.locale.language == "en" }.sortedBy { it.name }
@@ -49,6 +51,7 @@ class DebugToolReceiver : BroadcastReceiver() {
                     EventLog.log("debug", "${v.name} ${v.locale} q=${v.quality} lat=${v.latency} net=${v.isNetworkConnectionRequired} installed=$installed")
                 }
                 tts.shutdown()
+                done.finish()
             }
             return
         }

@@ -2,7 +2,14 @@ package com.hisbaan.orbit.assistant
 
 import com.hisbaan.orbit.agent.Card
 
-enum class Phase { IDLE, STARTING, LISTENING, THINKING, SPEAKING, FINISHING }
+enum class Phase(val label: String) {
+    IDLE("Ready"),
+    STARTING("Connecting…"),
+    LISTENING("Listening…"),
+    THINKING("Thinking…"),
+    SPEAKING("Speaking"),
+    FINISHING("Finishing…"),
+}
 
 data class AssistantState(
     val phase: Phase = Phase.IDLE,

@@ -85,6 +85,22 @@ class OrbitSession(context: Context) :
         scope.launch { app.assistant.dismissRequests.collect { animateOut() } }
     }
 
+    /** Built once: new instances on every state change recomposed the header and input per streamed token. */
+    private val actions by lazy {
+        OverlayActions(
+            dismiss = ::close,
+            talk = { app.assistant.trigger("overlay", null) },
+            ask = app.assistant::ask,
+            stop = app.assistant::cancel,
+            typing = {
+                stopPanning()
+                app.assistant.stopListening()
+            },
+            openApp = ::openApp,
+            openLink = ::openLink,
+        )
+    }
+
     override fun onCreateContentView(): View = ComposeView(context).apply {
         setViewTreeLifecycleOwner(this@OrbitSession)
         setViewTreeSavedStateRegistryOwner(this@OrbitSession)
@@ -103,18 +119,7 @@ class OrbitSession(context: Context) :
                 AssistantOverlay(
                     state,
                     visible,
-                    OverlayActions(
-                        dismiss = ::close,
-                        talk = { app.assistant.trigger("overlay", null) },
-                        ask = app.assistant::ask,
-                        stop = app.assistant::cancel,
-                        typing = {
-                            stopPanning()
-                            app.assistant.stopListening()
-                        },
-                        openApp = ::openApp,
-                        openLink = ::openLink,
-                    ),
+                    actions,
                 )
             }
         }

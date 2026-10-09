@@ -67,6 +67,12 @@ fun SettingsScreen(
                 onValueChange = { v -> vm.edit { it.copy(baseUrl = v) } },
                 label = { Text("Base URL") },
                 singleLine = true,
+                isError = sendsKeyInTheClear(draft.baseUrl),
+                supportingText = if (sendsKeyInTheClear(draft.baseUrl)) {
+                    { Text("Not encrypted: the API key would cross the internet in the clear. Use https unless this server is on your own network.") }
+                } else {
+                    null
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth(),
             )

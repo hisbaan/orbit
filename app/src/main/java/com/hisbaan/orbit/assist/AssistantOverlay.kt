@@ -62,6 +62,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -75,6 +76,8 @@ import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -83,6 +86,7 @@ import com.hisbaan.orbit.assistant.AssistantState
 import com.hisbaan.orbit.assistant.Phase
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlinx.coroutines.flow.collectLatest
 
 class OverlayActions(
     /** Tap outside the card or back: stop the turn and close. */
@@ -111,7 +115,12 @@ fun AssistantOverlay(state: AssistantState, visible: MutableTransitionState<Bool
                 Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.32f))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = actions.dismiss),
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClickLabel = "Close Orbit",
+                        onClick = actions.dismiss,
+                    ),
             )
         }
         AnimatedVisibility(
@@ -194,7 +203,7 @@ private fun Header(phase: Phase, openApp: () -> Unit) {
         PhaseIndicator(phase)
         Spacer(Modifier.width(10.dp))
         Text(
-            phaseLabel(phase),
+            phase.label,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
@@ -226,8 +235,8 @@ private fun Body(state: AssistantState, openLink: (String) -> Unit, modifier: Mo
         }
         state.reply?.let { reply ->
             val scroll = rememberScrollState()
-            // Follow the reply as it streams in.
-            LaunchedEffect(reply) { scroll.animateScrollTo(scroll.maxValue) }
+            // Follow the reply as it streams in: its scroll range grows once each chunk is laid out.
+            LaunchedEffect(scroll) { snapshotFlow { scroll.maxValue }.collectLatest { scroll.animateScrollTo(it) } }
             Text(
                 reply,
                 style = MaterialTheme.typography.bodyLarge,
@@ -290,7 +299,10 @@ private fun InputRow(phase: Phase, actions: OverlayActions) {
                     maxLines = 4,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = { send() }),
-                    modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) actions.typing() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = "Ask Orbit" }
+                        .onFocusChanged { if (it.isFocused) actions.typing() },
                 )
             }
         }
@@ -352,14 +364,6 @@ private fun PhaseIndicator(phase: Phase) {
 private val AssistantState.hasContent: Boolean
     get() = transcript != null || partialTranscript.isNotBlank() || reply != null || actions.isNotEmpty() || error != null || cards.isNotEmpty()
 
-private fun phaseLabel(phase: Phase): String = when (phase) {
-    Phase.IDLE -> "Ready"
-    Phase.STARTING -> "Connecting…"
-    Phase.LISTENING -> "Listening…"
-    Phase.THINKING -> "Thinking…"
-    Phase.SPEAKING -> "Speaking"
-    Phase.FINISHING -> "Finishing…"
-}
 
 /** What a tool call looks like to the user. */
 private fun toolLabel(tool: String): String = when {

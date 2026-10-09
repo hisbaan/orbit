@@ -65,7 +65,7 @@ fun AssistantScreen(
             modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(phaseLabel(state.phase), style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
+            Text(state.phase.label, style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
             val heard = state.transcript ?: state.partialTranscript.takeIf { it.isNotBlank() }
             heard?.let { Labeled("You", it) }
             state.reply?.let { Labeled("Orbit", it) }
@@ -122,11 +122,3 @@ private fun Labeled(label: String, text: String) {
     }
 }
 
-private fun phaseLabel(phase: Phase): String = when (phase) {
-    Phase.IDLE -> "Ready"
-    Phase.STARTING -> "Connecting…"
-    Phase.LISTENING -> "Listening…"
-    Phase.THINKING -> "Thinking…"
-    Phase.SPEAKING -> "Speaking"
-    Phase.FINISHING -> "Finishing…"
-}

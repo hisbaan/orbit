@@ -61,6 +61,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Back on the screen the user was on after a rotation (onResume still leaves Settings if locked).
+        savedInstanceState?.getString(STATE_SCREEN)?.let { name -> Screen.entries.firstOrNull { it.name == name } }?.let { screen = it }
         enableEdgeToEdge()
         if (savedInstanceState == null) handleTrigger(intent, "onCreate")
 
@@ -95,6 +97,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Built once, so the screen doesn't recompose its buttons on every state change. */
+    private val assistantActions by lazy {
+        AssistantActions(
+            talk = { app.assistant.trigger("in-app button", null) },
+            stop = app.assistant::cancel,
+            grantPermissions = ::requestPermissions,
+            openAssistantSettings = ::openAssistantSettings,
+            openMediaAccessSettings = ::openMediaAccessSettings,
+            openSettings = { whenUnlocked { screen = Screen.SETTINGS } },
+            openMicLab = { whenUnlocked { screen = Screen.MIC_LAB } },
+        )
+    }
+
     @androidx.compose.runtime.Composable
     private fun AssistantContent() {
         val state by app.assistant.state.collectAsStateWithLifecycle()
@@ -104,18 +119,15 @@ class MainActivity : ComponentActivity() {
                 state = state,
                 // Not loaded yet counts as configured, so the setup card doesn't flash on launch.
                 setup = SetupStatus(missingPermissions, isDefaultAssistant, settings?.isProviderConfigured ?: true, hasMediaAccess),
-                actions = AssistantActions(
-                    talk = { app.assistant.trigger("in-app button", null) },
-                    stop = app.assistant::cancel,
-                    grantPermissions = ::requestPermissions,
-                    openAssistantSettings = ::openAssistantSettings,
-                    openMediaAccessSettings = ::openMediaAccessSettings,
-                    openSettings = { whenUnlocked { screen = Screen.SETTINGS } },
-                    openMicLab = { whenUnlocked { screen = Screen.MIC_LAB } },
-                ),
+                actions = assistantActions,
                 modifier = Modifier.padding(padding),
             )
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_SCREEN, screen.name)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -179,7 +191,7 @@ class MainActivity : ComponentActivity() {
     private fun refreshSetup() {
         missingPermissions = PERMISSIONS.filter { (permission, _) ->
             ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED
-        }.map { it.second }
+        }.map { it.second }.distinct() // read and write calendar share a label
         isDefaultAssistant = getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
         hasMediaAccess = app.mediaSessions.hasAccess
         // Only while it's open: the first touch builds Mic Lab, which starts listening to audio events.
@@ -221,6 +233,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        private const val STATE_SCREEN = "screen"
+
         private val TRIGGER_ACTIONS = setOf(
             Intent.ACTION_VOICE_COMMAND,
             RecognizerIntent.ACTION_VOICE_SEARCH_HANDS_FREE,

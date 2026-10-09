@@ -19,8 +19,14 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
 
 data class AppSettings(
     val baseUrl: String = DEFAULT_BASE_URL,
@@ -111,7 +117,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
             prefs[Keys.baseUrl] = new.baseUrl.trim()
             prefs[Keys.model] = new.model.trim()
             prefs[Keys.triggerRunsHailTest] = new.triggerRunsHailTest
-            prefs[Keys.savedPlaylists] = encodePlaylists(new.savedPlaylists)
+            prefs[Keys.savedPlaylists] = SavedPlaylists.encode(new.savedPlaylists)
             if (new.reasoningEffort != null) prefs[Keys.reasoningEffort] = new.reasoningEffort else prefs.remove(Keys.reasoningEffort)
             if (new.musicPackage != null) prefs[Keys.musicPackage] = new.musicPackage else prefs.remove(Keys.musicPackage)
             prefs[Keys.homeAssistantUrl] = new.homeAssistantUrl.trim()
@@ -140,7 +146,7 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
         reasoningEffort = prefs[Keys.reasoningEffort],
         musicPackage = prefs[Keys.musicPackage],
         triggerRunsHailTest = prefs[Keys.triggerRunsHailTest] ?: false,
-        savedPlaylists = prefs[Keys.savedPlaylists]?.let(::decodePlaylists).orEmpty(),
+        savedPlaylists = prefs[Keys.savedPlaylists]?.let(SavedPlaylists::decode).orEmpty(),
         homeAssistantUrl = prefs[Keys.homeAssistantUrl].orEmpty(),
         homeAssistant = prefs[Keys.homeAssistantEncrypted]?.let(SecretStore::decrypt)?.let(::decodeCredential),
         headsetSounds = prefs[Keys.headsetSounds]?.let(::decodeHeadsetSounds)
@@ -176,13 +182,25 @@ class SettingsRepository(context: Context, scope: CoroutineScope) {
             else -> null
         }
     }
+}
 
-    private fun encodePlaylists(playlists: List<SavedPlaylist>): String = JSONArray(
-        playlists.map { JSONObject().put("name", it.name).put("id", it.playlistId) },
-    ).toString()
+/** How saved playlists are stored: `[{"name": "Music", "id": "PL…"}]`. */
+internal object SavedPlaylists {
+    fun encode(playlists: List<SavedPlaylist>): String =
+        JsonArray(playlists.map { buildJsonObject { put("name", it.name); put("id", it.playlistId) } }).toString()
 
-    private fun decodePlaylists(json: String): List<SavedPlaylist> = runCatching {
-        val array = JSONArray(json)
-        List(array.length()) { i -> array.getJSONObject(i).let { SavedPlaylist(it.getString("name"), it.getString("id")) } }
-    }.getOrDefault(emptyList())
+    /** Entries that don't parse are dropped; a corrupt value reads as none. */
+    fun decode(json: String): List<SavedPlaylist> {
+        val array = try {
+            Json.parseToJsonElement(json) as? JsonArray
+        } catch (_: SerializationException) {
+            null
+        }
+        return array.orEmpty().mapNotNull { element ->
+            val entry = element as? JsonObject ?: return@mapNotNull null
+            val name = (entry["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            val id = (entry["id"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            SavedPlaylist(name, id)
+        }
+    }
 }

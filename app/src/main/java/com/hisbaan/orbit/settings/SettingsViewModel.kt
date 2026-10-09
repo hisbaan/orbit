@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothManager
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -263,7 +264,11 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Android's text-to-speech settings, where more voices can be downloaded. */
     fun openTtsSettings() {
-        getApplication<Application>().startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        try {
+            getApplication<Application>().startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: ActivityNotFoundException) {
+            _state.update { it.copy(status = "This phone has no text-to-speech settings screen.") }
+        }
     }
 
     /** "United States · IOB", "(online)" for network voices; names look like `en-us-x-iob-network`. */
