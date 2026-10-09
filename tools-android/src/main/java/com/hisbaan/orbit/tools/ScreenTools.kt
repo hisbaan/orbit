@@ -77,7 +77,7 @@ object ScreenContext {
         val lines = mutableListOf<String>()
         fun walk(node: AssistStructure.ViewNode) {
             if (node.visibility != View.VISIBLE) return
-            val password = node.inputType and InputType.TYPE_MASK_VARIATION in PASSWORD_VARIATIONS
+            val password = isPassword(node.inputType)
             val text = (node.text?.toString()?.takeUnless { password } ?: node.contentDescription?.toString())
                 ?.replace(Regex("\\s+"), " ")?.trim()
             if (!text.isNullOrEmpty() && lines.lastOrNull() != text) lines += text
@@ -87,11 +87,24 @@ object ScreenContext {
         return lines.joinToString("\n")
     }
 
-    private val PASSWORD_VARIATIONS = setOf(
+    /**
+     * Whether a field of [inputType] holds a password. The variation bits mean different things
+     * per input class: the number-password variation is the same value as the text URI one, so
+     * a browser's address bar read as a password.
+     */
+    internal fun isPassword(inputType: Int): Boolean {
+        val variation = inputType and InputType.TYPE_MASK_VARIATION
+        return when (inputType and InputType.TYPE_MASK_CLASS) {
+            InputType.TYPE_CLASS_TEXT -> variation in TEXT_PASSWORDS
+            InputType.TYPE_CLASS_NUMBER -> variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            else -> false
+        }
+    }
+
+    private val TEXT_PASSWORDS = setOf(
         InputType.TYPE_TEXT_VARIATION_PASSWORD,
         InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
         InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD,
-        InputType.TYPE_NUMBER_VARIATION_PASSWORD,
     )
 }
 

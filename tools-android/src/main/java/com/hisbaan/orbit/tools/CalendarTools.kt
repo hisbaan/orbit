@@ -4,17 +4,16 @@ import android.Manifest
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
-import android.content.pm.PackageManager
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
 import android.provider.CalendarContract.Instances
-import androidx.core.content.ContextCompat
 import com.hisbaan.orbit.agent.PendingAction
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
 import com.hisbaan.orbit.agent.boolean
 import com.hisbaan.orbit.agent.booleanProperty
 import com.hisbaan.orbit.agent.int
+import com.hisbaan.orbit.agent.long
 import com.hisbaan.orbit.agent.integerProperty
 import com.hisbaan.orbit.agent.objectSchema
 import com.hisbaan.orbit.agent.requireString
@@ -28,6 +27,7 @@ import kotlinx.serialization.json.JsonObject
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -41,8 +41,8 @@ import java.util.Locale
 class CalendarAccess(private val context: Context) {
     data class Calendar(val id: Long, val name: String, val account: String, val primary: Boolean, val writable: Boolean)
 
-    val canRead: Boolean get() = granted(Manifest.permission.READ_CALENDAR)
-    val canWrite: Boolean get() = granted(Manifest.permission.WRITE_CALENDAR)
+    val canRead: Boolean get() = context.hasPermission(Manifest.permission.READ_CALENDAR)
+    val canWrite: Boolean get() = context.hasPermission(Manifest.permission.WRITE_CALENDAR)
 
     suspend fun calendars(): List<Calendar> = withContext(Dispatchers.IO) {
         val projection = arrayOf(Calendars._ID, Calendars.CALENDAR_DISPLAY_NAME, Calendars.ACCOUNT_NAME, Calendars.IS_PRIMARY, Calendars.CALENDAR_ACCESS_LEVEL)
@@ -87,7 +87,10 @@ class CalendarAccess(private val context: Context) {
 
     /** The event's own row (not an occurrence), or null if it doesn't exist. */
     suspend fun event(id: Long): CalendarFormat.Event? = withContext(Dispatchers.IO) {
-        val projection = arrayOf(Events.TITLE, Events.DTSTART, Events.DTEND, Events.ALL_DAY, Events.EVENT_LOCATION, Events.CALENDAR_DISPLAY_NAME, Events.RRULE)
+        val projection = arrayOf(
+            Events.TITLE, Events.DTSTART, Events.DTEND, Events.ALL_DAY, Events.EVENT_LOCATION, Events.CALENDAR_DISPLAY_NAME,
+            Events.RRULE, Events.RDATE, Events.ORIGINAL_ID, Events.CALENDAR_ACCESS_LEVEL,
+        )
         context.contentResolver.query(ContentUris.withAppendedId(Events.CONTENT_URI, id), projection, null, null, null)?.use { c ->
             if (!c.moveToFirst()) return@use null
             CalendarFormat.Event(
@@ -98,7 +101,9 @@ class CalendarAccess(private val context: Context) {
                 allDay = c.getInt(3) == 1,
                 location = c.getString(4)?.takeIf { it.isNotBlank() },
                 calendar = c.getString(5).orEmpty(),
-                recurring = !c.getString(6).isNullOrBlank(),
+                // A repeat rule, extra dates, or a changed occurrence of a series (it points back at it).
+                recurring = !c.getString(6).isNullOrBlank() || !c.getString(7).isNullOrBlank() || !c.isNull(8),
+                writable = c.getInt(9) >= Calendars.CAL_ACCESS_CONTRIBUTOR,
             )
         }
     }
@@ -124,8 +129,6 @@ class CalendarAccess(private val context: Context) {
         context.contentResolver.delete(ContentUris.withAppendedId(Events.CONTENT_URI, id), null, null) > 0
     }
 
-    private fun granted(permission: String) =
-        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     companion object {
         /**
@@ -135,8 +138,11 @@ class CalendarAccess(private val context: Context) {
         fun pick(calendars: List<Calendar>, name: String?, defaultId: Long? = null): Calendar? {
             val writable = calendars.filter { it.writable }
             if (name != null) {
-                return writable.firstOrNull { it.name.equals(name, ignoreCase = true) }
-                    ?: writable.firstOrNull { it.name.contains(name, ignoreCase = true) }
+                return when (val found = NameMatch.find(writable, name) { it.name }) {
+                    is NameMatch.Result.One -> found.value
+                    is NameMatch.Result.Many -> found.values.first()
+                    NameMatch.Result.None -> null
+                }
             }
             return writable.firstOrNull { it.id == defaultId } ?: writable.firstOrNull { it.primary } ?: writable.firstOrNull()
         }
@@ -154,6 +160,7 @@ object CalendarFormat {
         val location: String?,
         val calendar: String,
         val recurring: Boolean = false,
+        val writable: Boolean = true,
     )
 
     data class Span(val begin: Instant, val end: Instant, val allDay: Boolean, val zone: ZoneId)
@@ -161,11 +168,19 @@ object CalendarFormat {
     private val day = DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)
     private val time = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH)
 
-    /** "2026-10-08T14:00", "2026-10-08 14:00" or "2026-10-08". A date alone means all day. */
-    fun parse(text: String): Pair<LocalDateTime, Boolean>? {
-        val t = text.trim().replace(' ', 'T').removeSuffix("Z")
+    /**
+     * "2026-10-08T14:00", "2026-10-08 14:00" or "2026-10-08", in [zone]. A date alone means all
+     * day. A time with "Z" or an offset is a moment, given as [zone]'s time then.
+     */
+    fun parse(text: String, zone: ZoneId): Pair<LocalDateTime, Boolean>? {
+        val t = text.trim().replace(' ', 'T')
         return try {
-            if ('T' in t) LocalDateTime.parse(t) to false else LocalDate.parse(t).atStartOfDay() to true
+            if ('T' !in t) return LocalDate.parse(t).atStartOfDay() to true
+            try {
+                LocalDateTime.parse(t) to false
+            } catch (_: DateTimeParseException) {
+                OffsetDateTime.parse(t).atZoneSameInstant(zone).toLocalDateTime() to false
+            }
         } catch (_: DateTimeParseException) {
             null
         }
@@ -177,9 +192,9 @@ object CalendarFormat {
      * midnight to the UTC midnight after the last day, as the provider requires.
      */
     fun span(start: String, end: String?, durationMinutes: Int?, allDay: Boolean?, zone: ZoneId): Result<Span> {
-        val (begin, dateOnly) = parse(start) ?: return Result.failure(IllegalArgumentException("start '$start' isn't a date or date-time like 2026-10-08T14:00"))
+        val (begin, dateOnly) = parse(start, zone) ?: return Result.failure(IllegalArgumentException("start '$start' isn't a date or date-time like 2026-10-08T14:00"))
         val whole = allDay ?: dateOnly
-        val finish = end?.let { parse(it)?.first ?: return Result.failure(IllegalArgumentException("end '$end' isn't a date or date-time")) }
+        val finish = end?.let { parse(it, zone)?.first ?: return Result.failure(IllegalArgumentException("end '$end' isn't a date or date-time")) }
         if (whole) {
             val lastDay = (finish ?: begin).toLocalDate()
             if (lastDay.isBefore(begin.toLocalDate())) return Result.failure(IllegalArgumentException("end is before start"))
@@ -257,8 +272,8 @@ class CalendarEventsTool(private val calendar: CalendarAccess, private val zone:
     override suspend fun invoke(args: JsonObject): ToolOutcome {
         if (!calendar.canRead) return ToolOutcome(NO_PERMISSION)
         val zone = zone()
-        val from = args.string("start")?.let { CalendarFormat.parse(it) ?: return ToolOutcome("Error: start '$it' isn't a date or date-time") }
-        val to = args.string("end")?.let { CalendarFormat.parse(it) ?: return ToolOutcome("Error: end '$it' isn't a date or date-time") }
+        val from = args.string("start")?.let { CalendarFormat.parse(it, zone) ?: return ToolOutcome("Error: start '$it' isn't a date or date-time") }
+        val to = args.string("end")?.let { CalendarFormat.parse(it, zone) ?: return ToolOutcome("Error: end '$it' isn't a date or date-time") }
         val begin = from?.first?.atZone(zone)?.toInstant() ?: Instant.now()
         // A bare end date includes that whole day.
         val end = to?.let { (t, dateOnly) -> (if (dateOnly) t.plusDays(1) else t).atZone(zone).toInstant() }
@@ -269,7 +284,7 @@ class CalendarEventsTool(private val calendar: CalendarAccess, private val zone:
             CalendarFormat.inRange(e, begin, end, zone) &&
                 (query == null || listOfNotNull(e.title, e.location, e.calendar).any { it.contains(query, ignoreCase = true) })
         }
-        val limit = args.int("limit") ?: 25
+        val limit = (args.int("limit") ?: 25).coerceIn(1, 100)
         EventLog.log("calendar", "Listed ${events.size} events")
         if (events.isEmpty()) return ToolOutcome("No events from ${CalendarFormat.describeRange(begin, end, zone)}.")
         return ToolOutcome(
@@ -309,7 +324,8 @@ class CreateCalendarEventTool(
     )
 
     override suspend fun invoke(args: JsonObject): ToolOutcome {
-        if (!calendar.canWrite) return ToolOutcome(NO_PERMISSION)
+        // Writing, and reading to find the calendar to write to.
+        if (!calendar.canWrite || !calendar.canRead) return ToolOutcome(NO_PERMISSION)
         val zone = zone()
         val span = CalendarFormat.span(args.requireString("start"), args.string("end"), args.int("duration_minutes"), args.boolean("all_day"), zone)
             .getOrElse { return ToolOutcome("Error: ${it.message}") }
@@ -344,10 +360,11 @@ class DeleteCalendarEventTool(private val calendar: CalendarAccess, private val 
 
     override suspend fun invoke(args: JsonObject): ToolOutcome {
         if (!calendar.canWrite) return ToolOutcome(NO_PERMISSION)
-        val id = args.int("id")?.toLong() ?: return ToolOutcome("Error: id is required")
+        val id = args.long("id") ?: return ToolOutcome("Error: id is required")
         val event = calendar.event(id) ?: return ToolOutcome("No event with id $id.")
         val what = "'${event.title}', ${CalendarFormat.describeTime(event.begin, event.end, event.allDay, zone())}"
         if (event.recurring) return ToolOutcome("$what is a recurring event; Orbit can't delete single occurrences, so it was left alone.")
+        if (!event.writable) return ToolOutcome("$what is in ${event.calendar}, which Orbit can only read, so it was left alone.")
         return ToolOutcome(
             "Not deleted yet: ask the user to confirm deleting $what.",
             pending = PendingAction("delete event $id") {

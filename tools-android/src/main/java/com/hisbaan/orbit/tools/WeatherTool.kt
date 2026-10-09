@@ -2,14 +2,12 @@ package com.hisbaan.orbit.tools
 
 import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.CancellationSignal
 import android.os.SystemClock
-import androidx.core.content.ContextCompat
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
 import com.hisbaan.orbit.agent.int
@@ -63,6 +61,8 @@ class WeatherTool(
 
     override suspend fun invoke(args: JsonObject): ToolOutcome = coroutineScope {
         val t0 = System.currentTimeMillis()
+        // A card shown after this call must be this forecast, not an earlier one for elsewhere.
+        latest.snapshot = null
         val days = args.int("days") ?: 2
         val imperial = Locale.getDefault().country in IMPERIAL_COUNTRIES
         val name = args.string("place")
@@ -126,7 +126,7 @@ class DeviceLocation(context: Context) {
     private val manager = appContext.getSystemService(LocationManager::class.java)
 
     val granted: Boolean
-        get() = PERMISSIONS.any { ContextCompat.checkSelfPermission(appContext, it) == PackageManager.PERMISSION_GRANTED }
+        get() = PERMISSIONS.any(appContext::hasPermission)
 
     /**
      * A recent known location right away (weather doesn't need a fresh fix, and waiting for one

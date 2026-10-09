@@ -2,7 +2,20 @@ package com.hisbaan.orbit.tools
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import java.util.Locale
+
+/** The app's name as the launcher shows it ("YouTube Music"), or its package if it has none. */
+internal fun appLabel(context: Context, packageName: String): String = try {
+    val pm = context.packageManager
+    pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
+} catch (_: Exception) {
+    packageName
+}
+
+internal fun Context.hasPermission(permission: String): Boolean =
+    ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
 /**
  * Apps that handle an intent, as (label, package), deduplicated by package. Loading every

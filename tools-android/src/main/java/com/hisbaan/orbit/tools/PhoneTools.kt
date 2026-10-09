@@ -3,10 +3,8 @@ package com.hisbaan.orbit.tools
 import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract.CommonDataKinds.Phone
-import androidx.core.content.ContextCompat
 import com.hisbaan.orbit.agent.AfterTurnAction
 import com.hisbaan.orbit.agent.PendingAction
 import com.hisbaan.orbit.agent.Tool
@@ -47,7 +45,7 @@ class CallContactTool(private val context: Context) : Tool {
         phoneNumber(who)?.let { digits ->
             return askToConfirm("the number ${digits.toList().joinToString(" ")}") { dial(digits, digits) }
         }
-        if (!granted(Manifest.permission.READ_CONTACTS)) {
+        if (!context.hasPermission(Manifest.permission.READ_CONTACTS)) {
             return ToolOutcome("Error: Orbit doesn't have contacts permission. Tell the user to grant it in Orbit's settings.")
         }
 
@@ -78,7 +76,7 @@ class CallContactTool(private val context: Context) : Tool {
     )
 
     private fun dial(number: String, label: String): ToolOutcome {
-        val canCall = granted(Manifest.permission.CALL_PHONE)
+        val canCall = context.hasPermission(Manifest.permission.CALL_PHONE)
         val intent = Intent(if (canCall) Intent.ACTION_CALL else Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return ToolOutcome(
@@ -115,8 +113,6 @@ class CallContactTool(private val context: Context) : Tool {
         return result
     }
 
-    private fun granted(permission: String) =
-        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     companion object {
         private val FORMATTING = Regex("[\\s().\\-]")
@@ -141,13 +137,11 @@ class OpenAppTool(private val context: Context) : Tool {
         val name = args.requireString("name")
         val pm = context.packageManager
         val apps = InstalledApps.handling(context, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER))
-        val match = apps.firstOrNull { it.first.equals(name, ignoreCase = true) }
-            ?: apps.filter { it.first.contains(name, ignoreCase = true) }.singleOrNull()
-            ?: return ToolOutcome(
-                apps.filter { it.first.contains(name, ignoreCase = true) }.takeIf { it.isNotEmpty() }
-                    ?.let { "Several apps match '$name': ${it.take(5).joinToString { a -> a.first }}. Ask which one." }
-                    ?: "No installed app is called '$name'.",
-            )
+        val match = when (val found = NameMatch.find(apps, name) { it.first }) {
+            is NameMatch.Result.One -> found.value
+            is NameMatch.Result.Many -> return ToolOutcome("Several apps match '$name': ${found.values.take(5).joinToString { it.first }}. Ask which one.")
+            NameMatch.Result.None -> return ToolOutcome("No installed app is called '$name'.")
+        }
         val launch = pm.getLaunchIntentForPackage(match.second)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ?: return ToolOutcome("Error: ${match.first} can't be launched.")
         return ToolOutcome(

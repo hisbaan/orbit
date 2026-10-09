@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.Parcelable
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.os.BundleCompat
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
@@ -57,12 +58,14 @@ class NotificationsTool(private val context: Context) : Tool {
         val items = readable(active)
             .filter { app == null || it.app.contains(app, ignoreCase = true) }
             .sortedByDescending { it.postedAt }
-        return ToolOutcome(format(items, args.int("limit") ?: 10, System.currentTimeMillis(), app))
+        return ToolOutcome(format(items, (args.int("limit") ?: 10).coerceIn(1, 30), System.currentTimeMillis(), app))
     }
 
     /** The listener, asking the system to rebind it if access is granted but it isn't connected. */
     private suspend fun connectedListener(): MediaAccessService? {
         MediaAccessService.connected?.let { return it }
+        // Without access there's nothing to wait for.
+        if (context.packageName !in NotificationManagerCompat.getEnabledListenerPackages(context)) return null
         EventLog.log("notifications", "Listener not connected; requesting rebind")
         NotificationListenerService.requestRebind(ComponentName(context, MediaAccessService::class.java))
         repeat(20) {
@@ -98,7 +101,7 @@ class NotificationsTool(private val context: Context) : Tool {
                 ?: listOfNotNull((extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))?.toString())
         }.map { it.trim() }.filter { it.isNotEmpty() }
         if (title == null && lines.isEmpty()) return null
-        return NotificationText(appLabel(sbn.packageName), title, lines, sbn.postTime)
+        return NotificationText(appLabel(context, sbn.packageName), title, lines, sbn.postTime)
     }
 
     /** MessagingStyle messages as "Sender: text". The bundle keys are the framework's. */
@@ -107,15 +110,9 @@ class NotificationsTool(private val context: Context) : Tool {
         return bundles.filterIsInstance<Bundle>().mapNotNull { message ->
             val text = message.getCharSequence("text")?.toString() ?: return@mapNotNull null
             val sender = BundleCompat.getParcelable(message, "sender_person", Person::class.java)?.name ?: message.getCharSequence("sender")
-            if (sender.isNullOrBlank()) text else "$sender: $text"
+            // MessagingStyle leaves the sender out of the user's own messages.
+            "${sender?.takeIf { it.isNotBlank() } ?: "You"}: $text"
         }
-    }
-
-    private fun appLabel(pkg: String): String = try {
-        val pm = context.packageManager
-        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-    } catch (_: Exception) {
-        pkg
     }
 
     companion object {

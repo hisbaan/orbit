@@ -80,4 +80,12 @@ class CalendarFormatTest {
         val meeting = CalendarFormat.Event(2, "Standup", Instant.parse("2026-10-09T13:00:00Z"), Instant.parse("2026-10-09T13:15:00Z"), false, null, "c")
         assertFalse(CalendarFormat.inRange(meeting, today, tomorrow, toronto))
     }
+
+    @Test
+    fun `times with a zone are moments, read in the user's zone`() {
+        assertEquals(java.time.LocalDateTime.parse("2026-10-08T14:00") to false, CalendarFormat.parse("2026-10-08T18:00:00Z", toronto))
+        assertEquals(java.time.LocalDateTime.parse("2026-10-08T14:00") to false, CalendarFormat.parse("2026-10-08T20:00+02:00", toronto))
+        assertEquals(java.time.LocalDateTime.parse("2026-10-08T14:00") to false, CalendarFormat.parse("2026-10-08 14:00", toronto))
+        assertEquals(null, CalendarFormat.parse("tomorrow", toronto))
+    }
 }

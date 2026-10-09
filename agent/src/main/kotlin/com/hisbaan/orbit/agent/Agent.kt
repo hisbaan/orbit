@@ -221,7 +221,8 @@ class Agent(
 
     /** Runs [call]; also returns the [CONFIRMATION_ARG] the model wrote, which the tool never sees. */
     private suspend fun runTool(call: ToolCall): Pair<ToolOutcome, String?> {
-        val tool = toolsByName[call.name] ?: return ToolOutcome("Error: unknown tool '${call.name}'") to null
+        // A hidden tool (its service isn't set up) stays out of reach even if the model names it.
+        val tool = toolsByName[call.name]?.takeIf { it.available } ?: return ToolOutcome("Error: unknown tool '${call.name}'") to null
         val parsed = try {
             if (call.argumentsJson.isBlank()) JsonObject(emptyMap()) else Json.parseToJsonElement(call.argumentsJson).jsonObject
         } catch (e: Exception) {

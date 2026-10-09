@@ -161,15 +161,10 @@ class MediaControlTool(
 
     private fun keyResult(action: String) =
         if (action == "play") "Playback will resume when you finish speaking." else "Sent '$action' to the media player."
-
-    private fun MediaController.appLabel(): String = appLabel(appContext, packageName)
 }
 
 /** What's playing, in which app, and which player-specific actions exist. */
-class MediaInfoTool(
-    private val context: Context,
-    private val sessions: MediaSessions,
-) : Tool {
+class MediaInfoTool(private val sessions: MediaSessions) : Tool {
     override val spec = ToolSpec(
         name = "media_info",
         description = "Find out what music or media is playing, on the phone or cast to a TV or speaker: title, artist, " +
@@ -265,7 +260,12 @@ class PlayMusicTool(
         // The app the user named, else their chosen one, else what's playing, else the system's default.
         val named = args.string("app")
         val pkg = if (named != null) {
-            musicApps().let { apps -> matchApp(apps, named) ?: return ToolOutcome("No music app called '$named'. Installed: ${apps.joinToString { it.first }}.") }
+            val apps = musicApps()
+            when (val found = NameMatch.find(apps, named) { it.first }) {
+                is NameMatch.Result.One -> found.value.second
+                is NameMatch.Result.Many -> return ToolOutcome("Several music apps match '$named': ${found.values.joinToString { it.first }}. Ask which one.")
+                NameMatch.Result.None -> return ToolOutcome("No music app called '$named'. Installed: ${apps.joinToString { it.first }}.")
+            }
         } else {
             musicPackage() ?: sessions.target()?.packageName ?: defaultMusicApp()
         }
@@ -368,14 +368,6 @@ class PlayMusicTool(
 
     companion object {
         private const val SPOTIFY = "com.spotify.music"
-
-        /** The app [said] names: an exact label first ("YouTube Music" over "YouTube"), then a partial one. */
-        fun matchApp(apps: List<Pair<String, String>>, said: String): String? {
-            val wanted = said.trim()
-            return apps.firstOrNull { it.first.equals(wanted, ignoreCase = true) }?.second
-                ?: apps.filter { it.first.contains(wanted, ignoreCase = true) || wanted.contains(it.first, ignoreCase = true) }
-                    .maxByOrNull { it.first.length }?.second
-        }
     }
 }
 
@@ -386,9 +378,3 @@ internal fun openInYouTubeMusic(context: Context, url: String) {
     )
 }
 
-internal fun appLabel(context: Context, packageName: String): String = try {
-    val pm = context.packageManager
-    pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString()
-} catch (_: Exception) {
-    packageName
-}
