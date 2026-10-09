@@ -4,6 +4,7 @@ import com.hisbaan.orbit.agent.AfterTurnAction
 import com.hisbaan.orbit.agent.Agent
 import com.hisbaan.orbit.agent.SentenceChunker
 import com.hisbaan.orbit.diagnostics.EventLog
+import com.hisbaan.orbit.history.HistoryEvent
 import com.hisbaan.orbit.providers.ChatTransport
 import com.hisbaan.orbit.providers.ProviderException
 import kotlinx.coroutines.CancellationException
@@ -42,11 +43,13 @@ interface Voice {
  * The talking part of a turn, apart from the audio plumbing: listen → think and speak, and
  * again without a button press when the reply asks a question (an answer, a confirmation) or
  * the user interrupts it. Replies are spoken sentence by sentence while they stream in.
- * [state] is what the UI shows. Plain Kotlin, so it runs in unit tests against fakes.
+ * [state] is what the UI shows; [record] gets what was heard and said for the conversation
+ * history. Plain Kotlin, so it runs in unit tests against fakes.
  */
 class Conversation(
     private val agent: Agent,
     private val state: MutableStateFlow<AssistantState>,
+    private val record: (HistoryEvent) -> Unit = {},
     /** Starts actions that make no sound (opening an app) as the reply starts, while the turn goes on. */
     private val startDuringReply: (List<AfterTurnAction>) -> Unit,
 ) {
@@ -80,12 +83,14 @@ class Conversation(
      */
     suspend fun answer(text: String, transport: ChatTransport, model: String, log: (String) -> Unit): List<AfterTurnAction> {
         val afterTurn = mutableListOf<AfterTurnAction>()
+        record(HistoryEvent.Heard(text, typed = true))
         thinkAndSpeak(text, transport, model, voice = null, afterTurn, log)
         return afterTurn
     }
 
     /** Says [text] with [voice], or with none only shows it. */
     suspend fun say(voice: Voice?, text: String, error: String? = null) {
+        record(HistoryEvent.Said(text, error))
         if (voice == null) return state.update { it.copy(reply = text, error = error) }
         state.update { it.copy(phase = Phase.SPEAKING, reply = text, error = error) }
         voice.say(text)
@@ -102,12 +107,21 @@ class Conversation(
         var followUp = false
         repeat(MAX_EXCHANGES) { exchange ->
             val text = if (exchange == 0 && typed != null) {
+                record(HistoryEvent.Heard(typed, typed = true))
                 typed
             } else {
                 state.value = AssistantState(phase = Phase.LISTENING)
                 log(if (followUp) "Listening for a follow-up" else "Listening")
                 val heard = voice.listen(onPartial = { partial -> state.update { it.copy(partialTranscript = partial) } })
                 log("Heard: ${if (heard is Heard.Text) EventLog.content(heard.text) else heard}")
+                record(
+                    when (heard) {
+                        is Heard.Text -> HistoryEvent.Heard(heard.text)
+                        Heard.Silence -> HistoryEvent.HeardNothing("Silence", failed = false)
+                        Heard.MicUnavailable -> HistoryEvent.HeardNothing("Microphone unavailable", failed = true)
+                        is Heard.Failed -> HistoryEvent.HeardNothing(heard.message, failed = true)
+                    },
+                )
                 when (heard) {
                     is Heard.Text -> heard.text
                     // Silence after a question just ends the turn.
@@ -120,8 +134,14 @@ class Conversation(
 
             val reply = thinkAndSpeak(text, transport, model, voice, afterTurn, log) ?: return
             followUp = when {
-                reply.interrupted -> true.also { log("Interrupted") }
-                reply.text.trimEnd().endsWith('?') -> true.also { log("Reply asks a question: listening for the answer") }
+                reply.interrupted -> true.also {
+                    log("Interrupted")
+                    record(HistoryEvent.ListeningAgain("the reply was interrupted"))
+                }
+                reply.text.trimEnd().endsWith('?') -> true.also {
+                    log("Reply asks a question: listening for the answer")
+                    record(HistoryEvent.ListeningAgain("the reply asked a question"))
+                }
                 else -> return
             }
         }
@@ -196,6 +216,7 @@ class Conversation(
                 sentences.close()
                 speaking.join()
                 val reason = (e as? ProviderException)?.message ?: e.message ?: e::class.simpleName
+                record(HistoryEvent.AgentFailed("${e::class.simpleName}: ${e.message}"))
                 say(voice, "I couldn't reach the model.", error = reason)
                 return@coroutineScope null
             }
@@ -215,6 +236,7 @@ class Conversation(
             }
             sentences.close()
             speaking.join()
+            record(HistoryEvent.Reply(state.value.reply ?: result.reply, interrupted))
             Reply(result.reply, interrupted)
         } finally {
             interruptible = false

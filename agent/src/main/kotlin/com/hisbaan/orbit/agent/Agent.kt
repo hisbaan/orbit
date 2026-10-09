@@ -45,6 +45,8 @@ data class AgentResult(
  * Actions that need the user's yes come back from tools as [PendingAction]s. They are held
  * here under a short ref and run only through [CONFIRM_TOOL], with that ref, in the user's
  * next message: neither the model nor text it reads can confirm on the user's behalf.
+ *
+ * Everything that happens is also reported to [trace], in full, for the conversation history.
  */
 class Agent(
     tools: List<Tool>,
@@ -55,6 +57,7 @@ class Agent(
     private val toolDispatcher: CoroutineDispatcher = Dispatchers.IO,
     /** Whether the phone is unlocked, after asking the user to unlock it if it isn't. */
     private val unlocked: suspend () -> Boolean = { true },
+    private val trace: (AgentEvent) -> Unit = {},
 ) {
     private val history = mutableListOf<ChatMessage>()
     private var lastTurnEndedAt = 0L
@@ -91,6 +94,7 @@ class Agent(
             if (waiting.action.needsUnlock && !unlocked()) return locked(CONFIRM_TOOL)
             held -= ref
             EventLog.log("agent", "Confirmed by the user: ${EventLog.content(waiting.action.description)}")
+            trace(AgentEvent.Confirmed(ref, waiting.action.description))
             return waiting.action.run()
         }
     }
@@ -112,6 +116,7 @@ class Agent(
             history.clear()
             held.clear()
         }
+        if (history.isEmpty()) trace(AgentEvent.ConversationStarted)
         userMessages++
         // Only the previous message's questions can be answered by this one.
         held.values.removeAll { it.userMessage < userMessages - 1 }
@@ -121,19 +126,40 @@ class Agent(
         history += ChatMessage.User(userText)
         try {
             repeat(maxSteps) { step ->
+                val prompt = systemPrompt()
                 val request = ChatRequest(
                     model = model,
-                    messages = listOf(ChatMessage.System(systemPrompt())) + history,
+                    messages = listOf(ChatMessage.System(prompt)) + history,
                     tools = tools.filter { it.available }.map(::specFor),
                 )
-                val response = transport.complete(request, onText)
+                val started = clock()
+                val response = try {
+                    transport.complete(request, onText)
+                } catch (e: Throwable) {
+                    if (e !is CancellationException) trace(AgentEvent.ModelFailed(step + 1, model, describe(e), clock() - started))
+                    throw e
+                }
                 EventLog.log(
                     "agent",
                     "Step ${step + 1}: finish=${response.finishReason} text=${response.text.length} chars " +
                         "tools=${response.toolCalls.joinToString { it.name }.ifEmpty { "none" }}",
                 )
+                trace(
+                    AgentEvent.ModelStep(
+                        step = step + 1,
+                        model = model,
+                        systemPrompt = prompt,
+                        tools = request.tools.map { it.name },
+                        messages = history.size,
+                        text = response.text,
+                        toolCalls = response.toolCalls,
+                        finishReason = response.finishReason,
+                        durationMs = clock() - started,
+                    ),
+                )
                 if (response.toolCalls.isEmpty()) {
                     history += ChatMessage.Assistant(response.text)
+                    trace(AgentEvent.Finished(AgentEvent.Finished.How.ANSWERED))
                     return AgentResult(response.text.trim(), afterTurn, calls)
                 }
                 history += ChatMessage.Assistant(response.text.ifBlank { null }, response.toolCalls)
@@ -163,13 +189,18 @@ class Agent(
                     // confirmations isn't, and a follow-up needs to know what was said.
                     if (response.text.isBlank()) history += ChatMessage.Assistant(reply)
                     EventLog.log("agent", "Step ${step + 1}: actions confirmed; no follow-up call")
+                    trace(AgentEvent.Finished(AgentEvent.Finished.How.CONFIRMED))
                     return AgentResult(reply, afterTurn, calls)
                 }
                 // A failure or a lookup: text written alongside the calls is withdrawn and the
                 // next step answers with the results in hand.
-                if (response.text.isNotBlank()) onDiscardText()
+                if (response.text.isNotBlank()) {
+                    onDiscardText()
+                    trace(AgentEvent.TextWithdrawn(response.text))
+                }
             }
             EventLog.log("agent", "Gave up after $maxSteps steps")
+            trace(AgentEvent.Finished(AgentEvent.Finished.How.GAVE_UP))
             val reply = "Sorry, I couldn't finish that."
             history += ChatMessage.Assistant(reply)
             return AgentResult(reply, afterTurn, calls)
@@ -221,17 +252,37 @@ class Agent(
 
     /** Runs [call]; also returns the [CONFIRMATION_ARG] the model wrote, which the tool never sees. */
     private suspend fun runTool(call: ToolCall): Pair<ToolOutcome, String?> {
+        val started = clock()
+        fun refuse(why: String, outcome: ToolOutcome): Pair<ToolOutcome, String?> {
+            trace(AgentEvent.ToolRan(call, outcome.result, clock() - started, done = false, refused = why))
+            return outcome to null
+        }
         // A hidden tool (its service isn't set up) stays out of reach even if the model names it.
-        val tool = toolsByName[call.name]?.takeIf { it.available } ?: return ToolOutcome("Error: unknown tool '${call.name}'") to null
+        val tool = toolsByName[call.name]?.takeIf { it.available } ?: return refuse("unknown tool", ToolOutcome("Error: unknown tool '${call.name}'"))
         val parsed = try {
             if (call.argumentsJson.isBlank()) JsonObject(emptyMap()) else Json.parseToJsonElement(call.argumentsJson).jsonObject
         } catch (e: Exception) {
-            return ToolOutcome("Error: arguments were not valid JSON") to null
+            return refuse("arguments weren't valid JSON", ToolOutcome("Error: arguments were not valid JSON"))
         }
         val modelSays = (parsed[CONFIRMATION_ARG] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        if (tool.needsUnlock && !unlocked()) return locked(call.name) to null
-        val outcome = runTool(call, tool.privateResult) { tool.invoke(JsonObject(parsed - CONFIRMATION_ARG)) }
-        return hold(call, outcome) to modelSays
+        if (tool.needsUnlock && !unlocked()) return refuse("phone locked", locked(call.name))
+        var error: String? = null
+        val ran = runTool(call, tool.privateResult, onError = { error = it }) { tool.invoke(JsonObject(parsed - CONFIRMATION_ARG)) }
+        val (outcome, heldAs) = hold(call, ran)
+        trace(
+            AgentEvent.ToolRan(
+                call = call,
+                result = outcome.result,
+                durationMs = clock() - started,
+                done = outcome.done,
+                error = error,
+                held = heldAs,
+                afterTurn = outcome.afterTurn?.description,
+                cards = outcome.cards.map { it::class.simpleName ?: "card" },
+                images = outcome.images.map { "${it.mimeType}, ${it.base64.length * 3 / 4 / 1024} KB" },
+            ),
+        )
+        return outcome to modelSays
     }
 
     private fun locked(tool: String): ToolOutcome {
@@ -239,9 +290,12 @@ class Agent(
         return ToolOutcome(LOCKED)
     }
 
-    /** Holds back the action [outcome] waits on, if any, and tells the model how to confirm it. */
-    private fun hold(call: ToolCall, outcome: ToolOutcome): ToolOutcome {
-        val action = outcome.pending ?: return outcome
+    /**
+     * Holds back the action [outcome] waits on, if any, and tells the model how to confirm it.
+     * Also returns what was held ("c1: Call Alex"), if anything.
+     */
+    private fun hold(call: ToolCall, outcome: ToolOutcome): Pair<ToolOutcome, String?> {
+        val action = outcome.pending ?: return outcome to null
         val ref = "c${++lastRef}"
         held[ref] = Held(userMessages, action)
         EventLog.log("agent", "Waiting for the user's yes ($ref): ${EventLog.content(action.description)}")
@@ -249,10 +303,15 @@ class Agent(
             result = outcome.result + "\nOnce the user agrees, call $CONFIRM_TOOL with ref '$ref'. If they change " +
                 "anything, call ${call.name} again instead.",
             done = false,
-        )
+        ) to "$ref: ${action.description}"
     }
 
-    private suspend fun runTool(call: ToolCall, privateResult: Boolean = false, block: suspend () -> ToolOutcome): ToolOutcome {
+    private suspend fun runTool(
+        call: ToolCall,
+        privateResult: Boolean = false,
+        onError: (String) -> Unit,
+        block: suspend () -> ToolOutcome,
+    ): ToolOutcome {
         val args = EventLog.content(call.argumentsJson)
         return try {
             withContext(toolDispatcher) { block() }.also {
@@ -264,9 +323,12 @@ class Agent(
             throw e
         } catch (e: Exception) {
             EventLog.log("tool", "${call.name}($args) failed: ${e::class.simpleName}: ${EventLog.content(e.message)}")
+            onError(describe(e))
             ToolOutcome("Error: ${e.message ?: e::class.simpleName}")
         }
     }
+
+    private fun describe(e: Throwable) = "${e::class.simpleName}: ${e.message}"
 
     companion object {
         /** The argument in which the model writes what to say if a [Tool.confirms] tool works. */

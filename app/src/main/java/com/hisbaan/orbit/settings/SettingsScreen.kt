@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.DropdownMenu
@@ -42,6 +43,8 @@ fun SettingsScreen(
     state: SettingsUiState,
     vm: SettingsViewModel,
     onBack: () -> Unit,
+    /** Asks the user to authenticate, then opens the history. */
+    onOpenHistory: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val draft = state.draft ?: return
@@ -218,6 +221,10 @@ fun SettingsScreen(
             HomeAssistantSettings(draft, state.haStatus, vm)
         }
 
+        Section("Conversation history") {
+            HistorySettings(draft, state, vm, onOpenHistory)
+        }
+
         Section("Debug") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Triggers run the Mic Lab hail test instead of the assistant", modifier = Modifier.weight(1f))
@@ -228,6 +235,49 @@ fun SettingsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun HistorySettings(draft: AppSettings, state: SettingsUiState, vm: SettingsViewModel, onOpenHistory: () -> Unit) {
+    Text(
+        "Everything from each turn: what Orbit heard, each model and tool call with its arguments and results, and " +
+            "what it said and did. For working out why something didn't go as asked. Kept for 7 days, encrypted on " +
+            "this phone; viewing it takes your PIN or biometric.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    if (!state.deviceSecure) {
+        Text(
+            "Set a screen lock to keep history: without one there's nothing to protect it with, so none is kept.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+        )
+        OutlinedButton(onClick = vm::openSecuritySettings) { Text("Set a screen lock") }
+    } else {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Keep history", modifier = Modifier.weight(1f))
+            Switch(checked = draft.keepHistory, onCheckedChange = vm::setKeepHistory)
+        }
+        var confirmClear by remember { mutableStateOf(false) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onOpenHistory) { Text("View history") }
+            OutlinedButton(onClick = { confirmClear = true }) { Text("Clear") }
+        }
+        if (confirmClear) {
+            AlertDialog(
+                onDismissRequest = { confirmClear = false },
+                title = { Text("Clear conversation history?") },
+                text = { Text("Every kept conversation is deleted.") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmClear = false
+                        vm.clearHistory()
+                    }) { Text("Clear") }
+                },
+                dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } },
+            )
+        }
+    }
+    state.historyStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 }
 
 @Composable

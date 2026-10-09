@@ -2,6 +2,7 @@ package com.hisbaan.orbit.settings
 
 import android.Manifest
 import android.app.Application
+import android.app.KeyguardManager
 import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothManager
 import android.content.ActivityNotFoundException
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 import java.util.UUID
@@ -64,6 +66,9 @@ data class SettingsUiState(
     val weatherStatus: String? = null,
     /** Calendars new events can go to; null without calendar permission. */
     val calendars: List<CalendarAccess.Calendar>? = null,
+    /** The phone has a screen lock, which the conversation history needs. */
+    val deviceSecure: Boolean = true,
+    val historyStatus: String? = null,
 )
 
 data class HaSignIn(val baseUrl: String, val authorizeUrl: String, val state: String)
@@ -83,6 +88,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         loadHeadsets()
         loadVoices()
         loadCalendars()
+        refreshDeviceSecure()
     }
 
     /** Edits that wait for an explicit save (text fields). */
@@ -234,6 +240,37 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val trimmed = url.trim()
         if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return null
         return runCatching { HaAuth.origin(trimmed) }.getOrNull()?.takeIf { it.substringAfter("://").isNotBlank() }
+    }
+
+    // endregion
+
+    // region Conversation history
+
+    fun refreshDeviceSecure() {
+        val secure = getApplication<Application>().getSystemService(KeyguardManager::class.java).isDeviceSecure
+        _state.update { it.copy(deviceSecure = secure) }
+    }
+
+    /** Turning it off also deletes what was kept. */
+    fun setKeepHistory(keep: Boolean) {
+        editAndSave { it.copy(keepHistory = keep) }
+        if (keep) _state.update { it.copy(historyStatus = null) } else clearHistory("History turned off and cleared.")
+    }
+
+    fun clearHistory(status: String = "History cleared.") {
+        val app = getApplication<OrbitApp>()
+        viewModelScope.launch {
+            withContext(app.historyIo) { app.history.clear() }
+            _state.update { it.copy(historyStatus = status) }
+        }
+    }
+
+    fun openSecuritySettings() {
+        try {
+            getApplication<Application>().startActivity(Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: ActivityNotFoundException) {
+            _state.update { it.copy(historyStatus = "Set a screen lock in the phone's Settings app.") }
+        }
     }
 
     // endregion

@@ -5,13 +5,19 @@ import android.app.KeyguardManager
 import android.app.role.RoleManager
 import android.bluetooth.BluetoothDevice
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.biometrics.BiometricManager
+import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
 import android.os.Bundle
+import android.os.CancellationSignal
+import android.os.PersistableBundle
 import android.provider.Settings
 import android.speech.RecognizerIntent
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -21,6 +27,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -34,6 +41,11 @@ import com.hisbaan.orbit.assistant.AssistantScreen
 import com.hisbaan.orbit.assistant.SetupStatus
 import com.hisbaan.orbit.audio.label
 import com.hisbaan.orbit.diagnostics.EventLog
+import com.hisbaan.orbit.history.HistoryActions
+import com.hisbaan.orbit.history.HistoryScreen
+import com.hisbaan.orbit.history.HistoryText
+import com.hisbaan.orbit.history.HistoryViewModel
+import com.hisbaan.orbit.history.StoredConversation
 import com.hisbaan.orbit.miclab.MicLabActions
 import com.hisbaan.orbit.miclab.MicLabScreen
 import com.hisbaan.orbit.miclab.MicLabViewModel
@@ -43,12 +55,13 @@ import com.hisbaan.orbit.ui.OrbitTheme
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private enum class Screen { ASSISTANT, SETTINGS, MIC_LAB }
+    private enum class Screen { ASSISTANT, SETTINGS, MIC_LAB, HISTORY }
 
     private val app get() = application as OrbitApp
     private val keyguardManager get() = getSystemService(KeyguardManager::class.java)
     private val micLab: MicLabViewModel by viewModels()
     private val settingsVm: SettingsViewModel by viewModels()
+    private val historyVm: HistoryViewModel by viewModels()
 
     private var screen by mutableStateOf(Screen.ASSISTANT)
     private var missingPermissions by mutableStateOf(emptyList<String>())
@@ -68,12 +81,21 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             OrbitTheme {
-                BackHandler(enabled = screen != Screen.ASSISTANT) { screen = Screen.ASSISTANT }
+                BackHandler(enabled = screen != Screen.ASSISTANT) { screen = if (screen == Screen.HISTORY) Screen.SETTINGS else Screen.ASSISTANT }
                 when (screen) {
                     Screen.ASSISTANT -> AssistantContent()
                     Screen.SETTINGS -> Scaffold { padding ->
                         val state by settingsVm.state.collectAsStateWithLifecycle()
-                        SettingsScreen(state, settingsVm, onBack = { screen = Screen.ASSISTANT }, Modifier.padding(padding))
+                        SettingsScreen(state, settingsVm, onBack = { screen = Screen.ASSISTANT }, onOpenHistory = ::openHistory, Modifier.padding(padding))
+                    }
+                    Screen.HISTORY -> Scaffold { padding ->
+                        // Kept out of screenshots, screen recordings and the recent apps preview.
+                        DisposableEffect(Unit) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                            onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+                        }
+                        val state by historyVm.state.collectAsStateWithLifecycle()
+                        HistoryScreen(state, historyActions, Modifier.padding(padding))
                     }
                     Screen.MIC_LAB -> {
                         val state by micLab.state.collectAsStateWithLifecycle()
@@ -95,6 +117,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private val historyActions by lazy {
+        HistoryActions(
+            back = { screen = Screen.SETTINGS },
+            unlock = ::openHistory,
+            select = historyVm::select,
+            delete = historyVm::delete,
+            copy = ::copyConversation,
+            share = ::shareConversation,
+        )
     }
 
     /** Built once, so the screen doesn't recompose its buttons on every state change. */
@@ -145,7 +178,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         // Belt and braces: Settings holds the API key and sends it to whatever endpoint is typed in.
-        if (screen == Screen.SETTINGS && keyguardManager.isKeyguardLocked) screen = Screen.ASSISTANT
+        if (screen in setOf(Screen.SETTINGS, Screen.HISTORY) && keyguardManager.isKeyguardLocked) screen = Screen.ASSISTANT
+        if (screen == Screen.SETTINGS) settingsVm.refreshDeviceSecure()
         refreshSetup()
     }
 
@@ -155,6 +189,61 @@ class MainActivity : ComponentActivity() {
         // screen (it turns off, the user moves on), the lock screen covers the app again.
         setShowWhenLocked(false)
         setTurnScreenOn(false)
+        // The history is decrypted only while it's on screen: coming back takes the PIN or biometric again.
+        if (!isChangingConfigurations) {
+            if (screen == Screen.HISTORY) screen = Screen.SETTINGS
+            historyVm.lock()
+        }
+    }
+
+    /**
+     * Opens the history once the user proves it's them, which also unlocks its keys for a moment.
+     * Sets the screen after: a PIN prompt stops Orbit, which leaves the history (see [onStop]).
+     */
+    private fun openHistory() = confirmItsYou {
+        screen = Screen.HISTORY
+        historyVm.load()
+    }
+
+    /**
+     * Asks for the PIN, pattern, password or a strong biometric, even on an unlocked phone, then
+     * runs [onSuccess]. Without a screen lock there's no history to show (none is kept).
+     */
+    private fun confirmItsYou(onSuccess: () -> Unit) {
+        val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL
+        if (getSystemService(BiometricManager::class.java).canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
+            Toast.makeText(this, "Set a screen lock to keep and view conversation history.", Toast.LENGTH_LONG).show()
+            return
+        }
+        BiometricPrompt.Builder(this)
+            .setTitle("Conversation history")
+            .setSubtitle("Confirm it's you to see what Orbit heard and did")
+            .setAllowedAuthenticators(authenticators)
+            .setConfirmationRequired(false)
+            .build()
+            .authenticate(
+                CancellationSignal(),
+                mainExecutor,
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onSuccess()
+                },
+            )
+    }
+
+    private fun copyConversation(conversation: StoredConversation) {
+        val clip = ClipData.newPlainText("Orbit conversation", HistoryText.export(conversation))
+        // Keeps it out of the clipboard preview and other apps' suggestions.
+        if (Build.VERSION.SDK_INT >= 33) clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
+        Toast.makeText(this, "Conversation copied", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun shareConversation(conversation: StoredConversation) {
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_SUBJECT, "Orbit conversation")
+            .putExtra(Intent.EXTRA_TEXT, HistoryText.export(conversation))
+        startActivity(Intent.createChooser(send, "Share conversation"))
     }
 
     /** Runs [action] once the device is unlocked, asking for the PIN or fingerprint if it's locked. */

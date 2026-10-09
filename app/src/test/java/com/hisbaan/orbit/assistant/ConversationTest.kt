@@ -5,6 +5,7 @@ import com.hisbaan.orbit.agent.Agent
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
 import com.hisbaan.orbit.agent.objectSchema
+import com.hisbaan.orbit.history.HistoryEvent
 import com.hisbaan.orbit.providers.ChatRequest
 import com.hisbaan.orbit.providers.ChatResponse
 import com.hisbaan.orbit.providers.ChatTransport
@@ -212,5 +213,24 @@ class ConversationTest {
         assertTrue(actions.isEmpty())
         assertEquals("Paris.", state.value.reply)
         assertFalse(state.value.phase == Phase.SPEAKING)
+    }
+
+    @Test
+    fun `records what was heard and said for the history`() = runTest {
+        val recorded = mutableListOf<HistoryEvent>()
+        val agent = Agent(emptyList(), systemPrompt = { "sys" }, toolDispatcher = StandardTestDispatcher(testScheduler))
+        val conversation = Conversation(agent, state, record = { recorded += it }) {}
+
+        conversation.talk(FakeVoice(Heard.Text("call Alex")), FakeModel(text("Alex Smith or Alex Jones?")))
+
+        assertEquals(
+            listOf(
+                HistoryEvent.Heard("call Alex"),
+                HistoryEvent.Reply("Alex Smith or Alex Jones?"),
+                HistoryEvent.ListeningAgain("the reply asked a question"),
+                HistoryEvent.HeardNothing("Silence", failed = false),
+            ),
+            recorded,
+        )
     }
 }

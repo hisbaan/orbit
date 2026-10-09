@@ -454,4 +454,117 @@ class AgentTest {
         val results = retry.requests[0].messages.filterIsInstance<ChatMessage.ToolResult>().associate { it.toolCallId to it.content }
         assertEquals(mapOf("1" to "Paused.", "2" to "Not run: the turn ended before this call."), results)
     }
+
+    // region Trace
+
+    @Test
+    fun `traces each model step and tool call in full`() = runTest {
+        val events = mutableListOf<AgentEvent>()
+        var now = 0L
+        val notifications = object : Tool {
+            override val spec = ToolSpec("notifications", "test tool", objectSchema())
+            override val privateResult = true
+            override suspend fun invoke(args: JsonObject): ToolOutcome {
+                now += 30
+                return ToolOutcome("Alex: running late")
+            }
+        }
+        val transport = object : ChatTransport {
+            private val queue = ArrayDeque(listOf(calls(ToolCall("1", "notifications", "{}")), text("Alex is running late.")))
+            override suspend fun complete(request: ChatRequest, onTextDelta: (String) -> Unit): ChatResponse {
+                now += 100
+                return queue.removeFirst()
+            }
+            override suspend fun listModels() = emptyList<String>()
+        }
+        val agent = Agent(listOf(notifications), systemPrompt = { "sys" }, clock = { now }, trace = { events += it })
+
+        agent.respond("any messages?", transport, "m")
+
+        assertEquals(AgentEvent.ConversationStarted, events[0])
+        val first = events[1] as AgentEvent.ModelStep
+        assertEquals(1, first.step)
+        assertEquals("sys", first.systemPrompt)
+        assertEquals(listOf("notifications", Agent.CONFIRM_TOOL), first.tools)
+        assertEquals(1, first.messages)
+        assertEquals(100, first.durationMs)
+        assertEquals(listOf("notifications"), first.toolCalls.map { it.name })
+        // Private results stay out of the log, but the history is for the user and keeps them.
+        val tool = events[2] as AgentEvent.ToolRan
+        assertEquals("Alex: running late", tool.result)
+        assertEquals(30, tool.durationMs)
+        assertEquals(3, (events[3] as AgentEvent.ModelStep).messages)
+        assertEquals(AgentEvent.Finished(AgentEvent.Finished.How.ANSWERED), events[4])
+        assertEquals(5, events.size)
+    }
+
+    @Test
+    fun `traces refusals, tool errors and model failures`() = runTest {
+        val events = mutableListOf<AgentEvent>()
+        val broken = RecordingTool("weather") { throw IllegalStateException("no network") }
+        val screen = object : Tool {
+            override val spec = ToolSpec("read_screen", "test tool", objectSchema())
+            override val needsUnlock = true
+            override suspend fun invoke(args: JsonObject) = ToolOutcome("screen text")
+        }
+        val agent = Agent(listOf(broken, screen), systemPrompt = { "sys" }, unlocked = { false }, trace = { events += it })
+        agent.respond(
+            "go",
+            FakeTransport(
+                calls(ToolCall("1", "nope", "{}"), ToolCall("2", "weather", "{oops"), ToolCall("3", "weather", "{}"), ToolCall("4", "read_screen", "{}")),
+                text("Sorry."),
+            ),
+            "m",
+        )
+        val tools = events.filterIsInstance<AgentEvent.ToolRan>()
+        assertEquals(listOf("unknown tool", "arguments weren't valid JSON", null, "phone locked"), tools.map { it.refused })
+        assertEquals("IllegalStateException: no network", tools[2].error)
+        assertEquals("Error: no network", tools[2].result)
+
+        val failing = object : ChatTransport {
+            override suspend fun complete(request: ChatRequest, onTextDelta: (String) -> Unit): ChatResponse = throw IllegalStateException("HTTP 401")
+            override suspend fun listModels() = emptyList<String>()
+        }
+        runCatching { agent.respond("again", failing, "m") }
+        val failed = events.last() as AgentEvent.ModelFailed
+        assertEquals("IllegalStateException: HTTP 401", failed.error)
+    }
+
+    @Test
+    fun `traces held actions, the yes that runs them and withdrawn text`() = runTest {
+        val events = mutableListOf<AgentEvent>()
+        val call = CallTool()
+        val agent = Agent(listOf(call.tool), systemPrompt = { "sys" }, trace = { events += it })
+        agent.respond("call Alex", FakeTransport(ChatResponse("Calling Alex.", lookup("1", "Alex").toolCalls, "tool_calls"), text("Call Alex?")), "m")
+        assertEquals("c1: call Alex", events.filterIsInstance<AgentEvent.ToolRan>().single().held)
+        assertEquals(AgentEvent.TextWithdrawn("Calling Alex."), events.filterIsInstance<AgentEvent.TextWithdrawn>().single())
+
+        events.clear()
+        agent.respond("yes", FakeTransport(confirm("2", "c1")), "m")
+        assertTrue(AgentEvent.ConversationStarted !in events) // same conversation
+        assertEquals(AgentEvent.Confirmed("c1", "call Alex"), events.filterIsInstance<AgentEvent.Confirmed>().single())
+        assertEquals(AgentEvent.Finished(AgentEvent.Finished.How.CONFIRMED), events.last())
+    }
+
+    @Test
+    fun `an expired history starts a new conversation, and running out of steps gives up`() = runTest {
+        val events = mutableListOf<AgentEvent>()
+        var now = 0L
+        val agent = Agent(
+            listOf(RecordingTool("lookup") { ToolOutcome("more") }),
+            systemPrompt = { "sys" },
+            clock = { now },
+            historyTtlMs = 1_000,
+            maxSteps = 2,
+            trace = { events += it },
+        )
+        agent.respond("hi", FakeTransport(text("Hello.")), "m")
+        now = 5_000
+        agent.respond("loop", FakeTransport(calls(ToolCall("1", "lookup", "{}")), calls(ToolCall("2", "lookup", "{}"))), "m")
+
+        assertEquals(2, events.count { it == AgentEvent.ConversationStarted })
+        assertEquals(AgentEvent.Finished(AgentEvent.Finished.How.GAVE_UP), events.last())
+    }
+
+    // endregion
 }

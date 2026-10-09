@@ -9,6 +9,9 @@ import com.hisbaan.orbit.assist.UnlockActivity
 import com.hisbaan.orbit.assistant.Assistant
 import com.hisbaan.orbit.audio.HeadsetProfile
 import com.hisbaan.orbit.diagnostics.EventLog
+import com.hisbaan.orbit.history.HistoryRecorder
+import com.hisbaan.orbit.history.HistoryStore
+import com.hisbaan.orbit.history.KeystoreHistoryKeys
 import com.hisbaan.orbit.homeassistant.HaCredential
 import com.hisbaan.orbit.homeassistant.HomeAssistant
 import com.hisbaan.orbit.homeassistant.HomeTools
@@ -47,6 +50,8 @@ import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 
 class OrbitApp : Application() {
@@ -125,8 +130,34 @@ class OrbitApp : Application() {
     /** The Bluetooth headset profile proxy, bound once for the assistant and Mic Lab. */
     val headsetProfile by lazy { HeadsetProfile(this) }
 
+    /** Past conversations, encrypted so only the user (PIN or biometric) can read them back. Not backed up. */
+    val history by lazy { HistoryStore(File(noBackupFilesDir, "history"), KeystoreHistoryKeys(this)) }
+
+    /** One history write at a time, in the order turns end. */
+    val historyIo = Dispatchers.IO.limitedParallelism(1)
+
+    private val historyRecorder by lazy {
+        HistoryRecorder(enabled = { settings.latest.value?.keepHistory != false }) { turn, startsConversation ->
+            appScope.launch(historyIo) {
+                try {
+                    history.append(turn, startsConversation)
+                } catch (e: Exception) {
+                    EventLog.log("history", "Couldn't save a turn: ${e::class.simpleName}")
+                }
+            }
+        }
+    }
+
     val assistant by lazy {
-        Assistant(context = this, settings = settings, httpClient = httpClient, tools = tools, tts = tts, headsetProfile = headsetProfile).apply {
+        Assistant(
+            context = this,
+            settings = settings,
+            httpClient = httpClient,
+            tools = tools,
+            tts = tts,
+            headsetProfile = headsetProfile,
+            history = historyRecorder,
+        ).apply {
             keyguardDismisser = { UnlockActivity.request(this@OrbitApp) }
             overlay = object : Assistant.Overlay {
                 override val isShown get() = OrbitSession.isShown
@@ -141,5 +172,6 @@ class OrbitApp : Application() {
         EventLog.addSink(LogcatSink)
         EventLog.addSink(FileSink(filesDir))
         settings // start loading settings now, not at the first turn
+        appScope.launch(historyIo) { runCatching { history.prune() } }
     }
 }

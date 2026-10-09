@@ -59,6 +59,8 @@ data class AppSettings(
     /** API keys for the keyed weather providers. Stored encrypted. */
     val pirateWeatherKey: String = "",
     val googleWeatherKey: String = "",
+    /** Keep the conversation history (on a phone with a screen lock). See [com.hisbaan.orbit.history.HistoryStore]. */
+    val keepHistory: Boolean = true,
     /**
      * Secrets the user had set that aren't here: settings are backed up and restored, their
      * secrets aren't (they're encrypted with a key that never leaves the phone), so after a
@@ -137,6 +139,7 @@ class SettingsRepository(
         val ttsVoice = stringPreferencesKey("tts_voice")
         val defaultCalendarId = longPreferencesKey("default_calendar_id")
         val weatherProvider = stringPreferencesKey("weather_provider")
+        val keepHistory = booleanPreferencesKey("keep_history")
 
         /** [Secret] names the user has set, so a restore without them can tell. */
         val setSecrets = stringSetPreferencesKey("set_secrets")
@@ -193,6 +196,7 @@ class SettingsRepository(
             if (new.ttsVoice != null) prefs[Keys.ttsVoice] = new.ttsVoice else prefs.remove(Keys.ttsVoice)
             if (new.defaultCalendarId != null) prefs[Keys.defaultCalendarId] = new.defaultCalendarId else prefs.remove(Keys.defaultCalendarId)
             prefs[Keys.weatherProvider] = new.weatherProvider.name
+            prefs[Keys.keepHistory] = new.keepHistory
             prefs.remove(Keys.legacyAlertingDevices)
             // Set now, or set before and still to be re-entered.
             val set = newSecrets.filterValues { !it.isNullOrBlank() }.keys + new.missingSecrets
@@ -242,6 +246,7 @@ class SettingsRepository(
             weatherProvider = plain[Keys.weatherProvider]?.let { name -> WeatherSource.entries.firstOrNull { it.name == name } } ?: WeatherSource.OPEN_METEO,
             pirateWeatherKey = values[Secret.PIRATE_WEATHER_KEY].orEmpty(),
             googleWeatherKey = values[Secret.GOOGLE_WEATHER_KEY].orEmpty(),
+            keepHistory = plain[Keys.keepHistory] ?: true,
             missingSecrets = set.filterTo(mutableSetOf()) { values[it] == null || (it == Secret.HOME_ASSISTANT && homeAssistant == null) },
         )
     }

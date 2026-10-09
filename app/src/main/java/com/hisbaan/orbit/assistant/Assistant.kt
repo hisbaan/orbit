@@ -16,6 +16,8 @@ import com.hisbaan.orbit.audio.AudioRouter
 import com.hisbaan.orbit.audio.EarconStyle
 import com.hisbaan.orbit.audio.HeadsetProfile
 import com.hisbaan.orbit.diagnostics.EventLog
+import com.hisbaan.orbit.history.HistoryEvent
+import com.hisbaan.orbit.history.HistoryRecorder
 import com.hisbaan.orbit.settings.AppSettings
 import com.hisbaan.orbit.settings.Secret
 import com.hisbaan.orbit.settings.SettingsRepository
@@ -46,7 +48,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Runs turns: starts, interrupts and cancels them, and runs their after-turn actions. A voice
  * turn opens its audio ([TurnAudio]), talks ([Conversation]), releases the audio, then runs
- * the actions that need the headset released (music, calls).
+ * the actions that need the headset released (music, calls). Each turn, start to finish, goes
+ * to [history].
  */
 class Assistant(
     context: Context,
@@ -55,6 +58,7 @@ class Assistant(
     tools: List<Tool>,
     private val tts: TtsSpeaker,
     private val headsetProfile: HeadsetProfile,
+    private val history: HistoryRecorder,
 ) {
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(AudioManager::class.java)
@@ -84,8 +88,13 @@ class Assistant(
     private var lastTriggerSource: String? = null
     private var lastTriggerAt = 0L
 
-    private val agent = Agent(tools, systemPrompt = { SystemPrompt.build() }, unlocked = { ensureUnlocked(midTurn = true) })
-    private val conversation = Conversation(agent, _state) { now ->
+    private val agent = Agent(
+        tools,
+        systemPrompt = { SystemPrompt.build() },
+        unlocked = { ensureUnlocked(midTurn = true) },
+        trace = history::agentEvent,
+    )
+    private val conversation = Conversation(agent, _state, history::record) { now ->
         _dismissRequests.tryEmit(Unit)
         scope.launch { runAfterTurn(now) }
     }
@@ -134,7 +143,7 @@ class Assistant(
             }
             return
         }
-        turn = scope.launch { runTurn(source, device, text) }
+        turn = scope.launch { recorded(if (text != null) "$source (typed)" else source) { runTurn(source, device, text) } }
     }
 
     fun cancel() {
@@ -149,7 +158,7 @@ class Assistant(
         val previous = turn
         turn = scope.launch {
             previous?.cancelAndJoin()
-            runTextTurn(text)
+            recorded("typed") { runTextTurn(text) }
         }
     }
 
@@ -211,6 +220,22 @@ class Assistant(
     private fun notSetUp(config: AppSettings) =
         if (Secret.API_KEY in config.missingSecrets) NEEDS_API_KEY else NOT_SET_UP
 
+    /** Runs [turn] as one turn of the history, ended (and saved) however it ends. */
+    private suspend fun recorded(source: String, turn: suspend () -> Unit) {
+        history.turnStarted(source)
+        try {
+            turn()
+        } catch (e: CancellationException) {
+            history.record(HistoryEvent.Cancelled)
+            throw e
+        } catch (e: Throwable) {
+            history.record(HistoryEvent.Failed("${e::class.simpleName}: ${e.message}"))
+            throw e
+        } finally {
+            history.turnEnded()
+        }
+    }
+
     /** A turn's step log: each line stamped with the time since the turn started. */
     private fun stepLog(): (String) -> Unit {
         val t0 = SystemClock.elapsedRealtime()
@@ -238,6 +263,12 @@ class Assistant(
      */
     private suspend fun ensureUnlocked(midTurn: Boolean): Boolean {
         if (!keyguardManager.isKeyguardLocked) return true
+        return askToUnlock(midTurn).also { unlocked ->
+            history.record(HistoryEvent.UnlockAsked(if (midTurn) "a tool" else "an action after the reply", unlocked))
+        }
+    }
+
+    private suspend fun askToUnlock(midTurn: Boolean): Boolean {
         val overlayWasShown = overlay?.isShown == true
         _dismissRequests.tryEmit(Unit)
         val dismiss = keyguardDismisser ?: return false
@@ -256,16 +287,19 @@ class Assistant(
         for (action in actions) {
             if (action.needsUnlock && !ensureUnlocked(midTurn = false)) {
                 EventLog.log("turn", "Skipped '${EventLog.content(action.description)}': device locked")
+                history.record(HistoryEvent.AfterTurn(action.description, HistoryEvent.AfterTurn.Outcome.SKIPPED_LOCKED))
                 _state.update { it.copy(error = "Unlock your phone to ${action.description}.") }
                 continue
             }
             try {
                 action.run()
                 EventLog.log("turn", "After turn: ${EventLog.content(action.description)}")
+                history.record(HistoryEvent.AfterTurn(action.description, HistoryEvent.AfterTurn.Outcome.RAN))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 EventLog.log("turn", "After turn '${EventLog.content(action.description)}' failed: ${e::class.simpleName}")
+                history.record(HistoryEvent.AfterTurn(action.description, HistoryEvent.AfterTurn.Outcome.FAILED, "${e::class.simpleName}: ${e.message}"))
                 _state.update { it.copy(error = "Couldn't ${action.description}: ${e.message}") }
             }
         }
