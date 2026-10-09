@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -25,6 +26,7 @@
     <application
         android:name=".OrbitApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
@@ -96,10 +98,15 @@
             android:exported="true"
             android:permission="android.permission.BIND_VOICE_INTERACTION" />
 
-        <!-- Required by the voice interaction config; Orbit does its own capture and STT. -->
+        <!--
+            Required by the voice interaction config; Orbit does its own capture and STT. Other
+            apps reach recognition services by binding them, so no permission: this one refuses
+            every request anyway.
+        -->
         <service
             android:name=".assist.OrbitRecognitionService"
-            android:exported="true">
+            android:exported="true"
+            tools:ignore="ExportedService">
             <intent-filter>
                 <action android:name="android.speech.RecognitionService" />
                 <category android:name="android.intent.category.DEFAULT" />

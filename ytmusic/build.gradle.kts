@@ -9,7 +9,6 @@ kotlin {
 dependencies {
     api(libs.ktor.client.core)
     implementation(libs.kotlinx.serialization.json)
-    implementation(project(":diagnostics"))
 
     testImplementation(libs.junit)
 }

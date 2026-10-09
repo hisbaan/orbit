@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.text.InputType
 import android.util.Base64
 import android.view.View
+import androidx.core.graphics.scale
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
 import com.hisbaan.orbit.agent.boolean
@@ -14,14 +15,14 @@ import com.hisbaan.orbit.agent.objectSchema
 import com.hisbaan.orbit.diagnostics.EventLog
 import com.hisbaan.orbit.providers.ChatImage
 import com.hisbaan.orbit.providers.ToolSpec
+import java.io.ByteArrayOutputStream
+import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
-import java.io.ByteArrayOutputStream
-import kotlin.math.max
-import kotlin.math.roundToInt
 
 /**
  * What was on screen when Orbit's overlay opened, from the system's assist data: the app's
@@ -154,7 +155,7 @@ class ReadScreenTool(private val context: Context) : Tool {
     private fun encode(bitmap: Bitmap): ChatImage {
         val scale = MAX_IMAGE_EDGE.toFloat() / max(bitmap.width, bitmap.height)
         val scaled = if (scale < 1f) {
-            Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).roundToInt(), (bitmap.height * scale).roundToInt(), true)
+            bitmap.scale((bitmap.width * scale).roundToInt(), (bitmap.height * scale).roundToInt())
         } else {
             bitmap
         }

@@ -242,16 +242,16 @@ class MainActivity : ComponentActivity() {
         )
 
         /** Runtime permissions and how they're described to the user. */
-        private val PERMISSIONS = listOfNotNull(
-            Manifest.permission.RECORD_AUDIO to "microphone",
-            Manifest.permission.BLUETOOTH_CONNECT to "nearby devices",
-            Manifest.permission.READ_CONTACTS to "contacts",
-            Manifest.permission.CALL_PHONE to "phone calls",
-            Manifest.permission.ACCESS_COARSE_LOCATION to "location (weather)",
-            Manifest.permission.READ_CALENDAR to "calendar",
-            Manifest.permission.WRITE_CALENDAR to "calendar",
+        private val PERMISSIONS = buildList {
+            add(Manifest.permission.RECORD_AUDIO to "microphone")
+            add(Manifest.permission.BLUETOOTH_CONNECT to "nearby devices")
+            add(Manifest.permission.READ_CONTACTS to "contacts")
+            add(Manifest.permission.CALL_PHONE to "phone calls")
+            add(Manifest.permission.ACCESS_COARSE_LOCATION to "location (weather)")
+            add(Manifest.permission.READ_CALENDAR to "calendar")
+            add(Manifest.permission.WRITE_CALENDAR to "calendar")
             // Android 17 gates connections to LAN addresses (Home Assistant, local model servers).
-            (Manifest.permission.ACCESS_LOCAL_NETWORK to "local network").takeIf { Build.VERSION.SDK_INT >= 37 },
-        )
+            if (Build.VERSION.SDK_INT >= 37) add(Manifest.permission.ACCESS_LOCAL_NETWORK to "local network")
+        }
     }
 }
