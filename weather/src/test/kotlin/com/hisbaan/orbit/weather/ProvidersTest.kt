@@ -22,9 +22,11 @@ class ProvidersTest {
             lines[2],
         )
         assertEquals(
-            "Today (6 Oct): rain in the afternoon, 3 to 15°C, 70% chance of precipitation, wind up to 22 km/h, sunrise 07:21, sunset 18:49.",
+            // The calendar day's extremes, and gusts rather than the day's average wind as a maximum.
+            "Today (6 Oct): rain in the afternoon, 2 to 16°C, 70% chance of precipitation, gusts up to 41 km/h, sunrise 07:21, sunset 18:49.",
             lines[3],
         )
+        assertEquals("Tomorrow (7 Oct): clear throughout the day, 6 to 17°C, 0% chance of precipitation, gusts up to 18 km/h", lines[4].substringBefore(", sunrise"))
         assertEquals(2, forecast.days.size)
         assertEquals(Sky.PARTLY_CLOUDY, forecast.current.condition.sky)
         assertEquals(Sky.DRIZZLE, forecast.hours[2].condition.sky)

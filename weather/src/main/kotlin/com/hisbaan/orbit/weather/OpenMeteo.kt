@@ -12,7 +12,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -31,18 +30,18 @@ class OpenMeteo(private val client: HttpClient) : WeatherProvider {
             parameter("format", "json")
         }
         if (!response.status.isSuccess()) throw IllegalStateException("Geocoding failed: HTTP ${response.status.value}")
-        return parsePlace(json.parseToJsonElement(response.bodyAsText()).jsonObject)
+        return parsePlace(Json.parseToJsonElement(response.bodyAsText()).jsonObject)
     }
 
     override suspend fun forecast(latitude: Double, longitude: Double, days: Int, imperial: Boolean, hours: Int): Forecast {
         val response = client.get("https://api.open-meteo.com/v1/forecast") {
-            parameter("latitude", latitude)
-            parameter("longitude", longitude)
+            parameter("latitude", coordinate(latitude))
+            parameter("longitude", coordinate(longitude))
             parameter("current", "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_gusts_10m")
             parameter("hourly", "temperature_2m,precipitation_probability,weather_code,wind_speed_10m")
             parameter(
                 "daily",
-                "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max,sunrise,sunset",
+                "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_gusts_10m_max,sunrise,sunset",
             )
             parameter("timezone", "auto")
             parameter("forecast_days", days.coerceIn(1, 16))
@@ -54,14 +53,12 @@ class OpenMeteo(private val client: HttpClient) : WeatherProvider {
             }
         }
         if (!response.status.isSuccess()) throw IllegalStateException("Forecast failed: HTTP ${response.status.value}: ${response.bodyAsText().take(200)}")
-        return parseForecast(json.parseToJsonElement(response.bodyAsText()).jsonObject)
+        return parseForecast(Json.parseToJsonElement(response.bodyAsText()).jsonObject, imperial)
     }
 
     companion object {
-        private val json = Json { ignoreUnknownKeys = true }
-
         fun parsePlace(root: JsonObject): Place? {
-            val first = root["results"]?.jsonArray?.firstOrNull() as? JsonObject ?: return null
+            val first = root.objects("results").firstOrNull() ?: return null
             return Place(
                 name = first.str("name") ?: return null,
                 region = first.str("admin1"),
@@ -71,12 +68,10 @@ class OpenMeteo(private val client: HttpClient) : WeatherProvider {
             )
         }
 
-        fun parseForecast(root: JsonObject): Forecast {
+        fun parseForecast(root: JsonObject, imperial: Boolean): Forecast {
             val current = root.obj("current")
             val hourly = root.obj("hourly")
             val daily = root.obj("daily")
-            val units = root.obj("current_units")
-            val dailyUnits = root.obj("daily_units")
             return Forecast(
                 current = Current(
                     time = current?.str("time").orEmpty(),
@@ -105,22 +100,17 @@ class OpenMeteo(private val client: HttpClient) : WeatherProvider {
                         precipitationChance = daily.column("precipitation_probability_max").getOrNull(i).num(),
                         precipitation = daily.column("precipitation_sum").getOrNull(i).num(),
                         maxWind = daily.column("wind_speed_10m_max").getOrNull(i).num(),
+                        gusts = daily.column("wind_gusts_10m_max").getOrNull(i).num(),
                         sunrise = daily.column("sunrise").getOrNull(i).str(),
                         sunset = daily.column("sunset").getOrNull(i).str(),
                     )
                 },
-                units = Units(
-                    temperature = units?.str("temperature_2m") ?: "°C",
-                    wind = units?.str("wind_speed_10m") ?: "km/h",
-                    precipitation = dailyUnits?.str("precipitation_sum") ?: "mm",
-                ),
+                // The units asked for, in the providers' shared wording (Open-Meteo labels its own "mp/h", "inch").
+                units = if (imperial) Units.IMPERIAL else Units.METRIC,
             )
         }
 
-        private fun JsonObject.obj(key: String) = get(key) as? JsonObject
         private fun JsonObject?.column(key: String): List<JsonElement> = (this?.get(key) as? JsonArray).orEmpty()
-        private fun JsonObject.str(key: String) = get(key).str()
-        private fun JsonObject.num(key: String) = get(key).num()
         private fun JsonElement?.str() = (this as? JsonPrimitive)?.contentOrNull
         private fun JsonElement?.num() = (this as? JsonPrimitive)?.doubleOrNull
     }

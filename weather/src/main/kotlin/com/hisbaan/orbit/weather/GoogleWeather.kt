@@ -9,17 +9,11 @@ import io.ktor.http.isSuccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
  * Google Maps Platform Weather API: the data behind Google's own weather app, so answers match
@@ -31,8 +25,11 @@ class GoogleWeather(private val client: HttpClient, private val apiKey: String) 
 
     override suspend fun forecast(latitude: Double, longitude: Double, days: Int, imperial: Boolean, hours: Int): Forecast = coroutineScope {
         val current = async { lookup("currentConditions:lookup", latitude, longitude, imperial) }
-        val hourly = async { lookup("forecast/hours:lookup", latitude, longitude, imperial, "hours" to hours, "pageSize" to hours) }
-        val daily = async { lookup("forecast/days:lookup", latitude, longitude, imperial, "days" to days, "pageSize" to days) }
+        // One page each: at most 24 hours and 10 days a page.
+        val hourCount = hours.coerceIn(1, 24)
+        val dayCount = days.coerceIn(1, 10)
+        val hourly = async { lookup("forecast/hours:lookup", latitude, longitude, imperial, "hours" to hourCount, "pageSize" to hourCount) }
+        val daily = async { lookup("forecast/days:lookup", latitude, longitude, imperial, "days" to dayCount, "pageSize" to dayCount) }
         parse(current.await(), hourly.await(), daily.await(), imperial)
     }
 
@@ -40,20 +37,20 @@ class GoogleWeather(private val client: HttpClient, private val apiKey: String) 
         val response = client.get("https://weather.googleapis.com/v1/$path") {
             // In a header, not the URL: request errors quote the URL, and those get logged.
             header("X-Goog-Api-Key", apiKey)
-            parameter("location.latitude", latitude)
-            parameter("location.longitude", longitude)
+            parameter("location.latitude", coordinate(latitude))
+            parameter("location.longitude", coordinate(longitude))
             parameter("unitsSystem", if (imperial) "IMPERIAL" else "METRIC")
-            parameter("languageCode", Locale.getDefault().toLanguageTag())
+            // Condition text goes into English sentences for the model, as the other providers' does.
+            parameter("languageCode", "en")
             extra.forEach { (k, v) -> parameter(k, v) }
         }
         if (!response.status.isSuccess()) {
             throw IllegalStateException("Google Weather failed: HTTP ${response.status.value}: ${response.bodyAsText().take(200)}")
         }
-        return json.parseToJsonElement(response.bodyAsText()).jsonObject
+        return Json.parseToJsonElement(response.bodyAsText()).jsonObject
     }
 
     companion object {
-        private val json = Json { ignoreUnknownKeys = true }
         private val localTime = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
 
         fun parse(current: JsonObject, hourly: JsonObject, daily: JsonObject, imperial: Boolean): Forecast {
@@ -70,7 +67,7 @@ class GoogleWeather(private val client: HttpClient, private val apiKey: String) 
                     wind = current.obj("wind")?.obj("speed")?.num("value"),
                     gusts = current.obj("wind")?.obj("gust")?.num("value"),
                 ),
-                hours = hourly.list("forecastHours").map { h ->
+                hours = hourly.objects("forecastHours").map { h ->
                     Hour(
                         time = local(h.obj("interval")?.str("startTime")).orEmpty(),
                         temperature = h.obj("temperature")?.num("degrees"),
@@ -79,12 +76,12 @@ class GoogleWeather(private val client: HttpClient, private val apiKey: String) 
                         wind = h.obj("wind")?.obj("speed")?.num("value"),
                     )
                 },
-                days = daily.list("forecastDays").map { d ->
+                days = daily.objects("forecastDays").map { d ->
                     val date = d.obj("displayDate")
                     val day = d.obj("daytimeForecast")
                     val night = d.obj("nighttimeForecast")
                     Day(
-                        date = date?.let { "%04d-%02d-%02d".format(it.int("year"), it.int("month"), it.int("day")) }.orEmpty(),
+                        date = date?.let { "%04d-%02d-%02d".format(it.int("year") ?: 0, it.int("month") ?: 0, it.int("day") ?: 0) }.orEmpty(),
                         condition = condition(day?.obj("weatherCondition")),
                         max = d.obj("maxTemperature")?.num("degrees"),
                         min = d.obj("minTemperature")?.num("degrees"),
@@ -92,6 +89,7 @@ class GoogleWeather(private val client: HttpClient, private val apiKey: String) 
                             .mapNotNull { it.obj("precipitation")?.obj("probability")?.num("percent") }.maxOrNull(),
                         precipitation = null,
                         maxWind = listOfNotNull(day, night).mapNotNull { it.obj("wind")?.obj("speed")?.num("value") }.maxOrNull(),
+                        gusts = listOfNotNull(day, night).mapNotNull { it.obj("wind")?.obj("gust")?.num("value") }.maxOrNull(),
                         sunrise = local(d.obj("sunEvents")?.str("sunriseTime")),
                         sunset = local(d.obj("sunEvents")?.str("sunsetTime")),
                     )
@@ -120,10 +118,5 @@ class GoogleWeather(private val client: HttpClient, private val apiKey: String) 
             return Condition(sky, text)
         }
 
-        private fun JsonObject.obj(key: String) = get(key) as? JsonObject
-        private fun JsonObject.list(key: String): List<JsonObject> = (get(key) as? JsonArray).orEmpty().filterIsInstance<JsonObject>()
-        private fun JsonObject.str(key: String) = (get(key) as? JsonPrimitive)?.contentOrNull
-        private fun JsonObject.num(key: String) = (get(key) as? JsonPrimitive)?.doubleOrNull
-        private fun JsonObject.int(key: String) = (get(key) as? JsonPrimitive)?.intOrNull ?: 0
     }
 }

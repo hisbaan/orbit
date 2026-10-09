@@ -8,6 +8,7 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.CancellationSignal
 import android.os.SystemClock
+import androidx.core.text.util.LocalePreferences
 import com.hisbaan.orbit.agent.Tool
 import com.hisbaan.orbit.agent.ToolOutcome
 import com.hisbaan.orbit.agent.int
@@ -64,7 +65,9 @@ class WeatherTool(
         // A card shown after this call must be this forecast, not an earlier one for elsewhere.
         latest.snapshot = null
         val days = args.int("days") ?: 2
-        val imperial = Locale.getDefault().country in IMPERIAL_COUNTRIES
+        // The user's temperature preference (Settings > System > Languages & region), which
+        // defaults from the region: an en-US phone in Canada can still be set to Celsius.
+        val imperial = LocalePreferences.getTemperatureUnit() == LocalePreferences.TemperatureUnit.FAHRENHEIT
         val name = args.string("place")
         val latitude: Double
         val longitude: Double
@@ -110,7 +113,6 @@ class WeatherTool(
     }
 
     private companion object {
-        val IMPERIAL_COUNTRIES = setOf("US", "LR", "MM")
         const val CARD_HOURS = 24
         const val CARD_DAYS = 7
     }

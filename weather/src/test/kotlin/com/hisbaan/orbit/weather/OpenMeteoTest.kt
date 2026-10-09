@@ -19,7 +19,7 @@ class OpenMeteoTest {
 
     @Test
     fun `describes current, hourly and daily weather`() {
-        val forecast = OpenMeteo.parseForecast(fixture("forecast_toronto.json"))
+        val forecast = OpenMeteo.parseForecast(fixture("forecast_toronto.json"), imperial = false)
         assertEquals(12, forecast.hours.size)
         assertEquals(3, forecast.days.size)
 
@@ -34,5 +34,17 @@ class OpenMeteoTest {
         )
         assertTrue(lines[4], lines[4].startsWith("Tomorrow (7 Oct): "))
         assertTrue(lines[5], lines[5].startsWith("Thursday (8 Oct): "))
+    }
+
+    @Test
+    fun `imperial units read as words the others use`() {
+        // Open-Meteo labels its own "mp/h" and "inch".
+        assertEquals(Units.IMPERIAL, OpenMeteo.parseForecast(fixture("forecast_toronto.json"), imperial = true).units)
+    }
+
+    @Test
+    fun `coordinates near zero are plain decimals`() {
+        assertEquals("0.00010", coordinate(0.0001))
+        assertEquals("-79.38320", coordinate(-79.3832))
     }
 }

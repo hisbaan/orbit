@@ -55,9 +55,12 @@ data class Day(
     val min: Double?,
     val precipitationChance: Double?,
     val precipitation: Double?,
+    /** The strongest sustained wind. */
     val maxWind: Double?,
     val sunrise: String?,
     val sunset: String?,
+    /** The strongest gust, where the provider gives one. */
+    val gusts: Double? = null,
 )
 
 data class Forecast(val current: Current, val hours: List<Hour>, val days: List<Day>, val units: Units) {
@@ -92,6 +95,7 @@ data class Forecast(val current: Current, val hours: List<Hour>, val days: List<
             d.precipitationChance?.let { append(", ${it.whole()}% chance of precipitation") }
             d.precipitation?.takeIf { it > 0 }?.let { append(" (${"%.1f".format(Locale.ROOT, it)} ${units.precipitation})") }
             d.maxWind?.let { append(", wind up to ${it.whole()} ${units.wind}") }
+            d.gusts?.let { append(", gusts up to ${it.whole()} ${units.wind}") }
             d.sunrise?.let { append(", sunrise ${it.timePart()}") }
             d.sunset?.let { append(", sunset ${it.timePart()}") }
             append(".\n")

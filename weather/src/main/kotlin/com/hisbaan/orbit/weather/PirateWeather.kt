@@ -7,13 +7,8 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.longOrNull
 import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
@@ -29,7 +24,7 @@ class PirateWeather(private val client: HttpClient, private val apiKey: String) 
 
     override suspend fun forecast(latitude: Double, longitude: Double, days: Int, imperial: Boolean, hours: Int): Forecast {
         val response = try {
-            client.get("https://api.pirateweather.net/forecast/$apiKey/$latitude,$longitude") {
+            client.get("https://api.pirateweather.net/forecast/$apiKey/${coordinate(latitude)},${coordinate(longitude)}") {
                 // "ca": °C and km/h, as Open-Meteo's metric; "us": °F and mph.
                 parameter("units", if (imperial) "us" else "ca")
                 parameter("exclude", "minutely,alerts")
@@ -44,11 +39,10 @@ class PirateWeather(private val client: HttpClient, private val apiKey: String) 
         if (!response.status.isSuccess()) {
             throw IllegalStateException("Pirate Weather failed: HTTP ${response.status.value}: ${response.bodyAsText().take(200)}")
         }
-        return parse(json.parseToJsonElement(response.bodyAsText()).jsonObject, days, hours, imperial)
+        return parse(Json.parseToJsonElement(response.bodyAsText()).jsonObject, days, hours, imperial)
     }
 
     companion object {
-        private val json = Json { ignoreUnknownKeys = true }
         private val localTime = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
         private val localDate = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
@@ -69,9 +63,9 @@ class PirateWeather(private val client: HttpClient, private val apiKey: String) 
                     gusts = now?.num("windGust"),
                 ),
                 // Hourly data starts at the top of the current hour.
-                hours = root.obj("hourly").data()
+                hours = root.obj("hourly")?.objects("data").orEmpty()
                     .filter { (it.long("time") ?: 0) + 3600 > (nowTime ?: 0) }
-                    .take(hours)
+                    .take(hours.coerceAtLeast(1))
                     .map { h ->
                         Hour(
                             time = time(h.long("time")).orEmpty(),
@@ -81,15 +75,19 @@ class PirateWeather(private val client: HttpClient, private val apiKey: String) 
                             wind = h.num("windSpeed"),
                         )
                     },
-                days = root.obj("daily").data().take(days).map { d ->
+                days = root.obj("daily")?.objects("data").orEmpty().take(days.coerceAtLeast(1)).map { d ->
                     Day(
                         date = date(d.long("time")).orEmpty(),
                         condition = condition(d),
-                        max = d.num("temperatureHigh") ?: d.num("temperatureMax"),
-                        min = d.num("temperatureLow") ?: d.num("temperatureMin"),
+                        // The calendar day's extremes, as the other providers give. High and Low are
+                        // the daytime high and the coming night's low, which runs into tomorrow.
+                        max = d.num("temperatureMax") ?: d.num("temperatureHigh"),
+                        min = d.num("temperatureMin") ?: d.num("temperatureLow"),
                         precipitationChance = d.num("precipProbability")?.let { it * 100 },
                         precipitation = null,
-                        maxWind = d.num("windSpeed"),
+                        // Daily windSpeed is the day's average, not its strongest; the gust is a maximum.
+                        maxWind = null,
+                        gusts = d.num("windGust"),
                         sunrise = time(d.long("sunriseTime")),
                         sunset = time(d.long("sunsetTime")),
                     )
@@ -100,7 +98,8 @@ class PirateWeather(private val client: HttpClient, private val apiKey: String) 
 
         /** Dark Sky icon names, plus Pirate Weather's thunderstorm and hail. */
         private fun condition(block: JsonObject?): Condition {
-            val text = block?.str("summary")?.lowercase() ?: return Condition.UNKNOWN
+            // Summaries are sentences ("Clear throughout the day."); the text goes mid-sentence.
+            val text = block?.str("summary")?.lowercase()?.trimEnd('.') ?: return Condition.UNKNOWN
             val sky = when (block.str("icon")) {
                 "clear-day", "clear-night" -> Sky.CLEAR
                 "partly-cloudy-day", "partly-cloudy-night" -> Sky.PARTLY_CLOUDY
@@ -116,10 +115,5 @@ class PirateWeather(private val client: HttpClient, private val apiKey: String) 
             return Condition(sky, text)
         }
 
-        private fun JsonObject.obj(key: String) = get(key) as? JsonObject
-        private fun JsonObject?.data(): List<JsonObject> = (this?.get("data") as? JsonArray).orEmpty().filterIsInstance<JsonObject>()
-        private fun JsonObject.str(key: String) = (get(key) as? JsonPrimitive)?.contentOrNull
-        private fun JsonObject.num(key: String) = (get(key) as? JsonPrimitive)?.doubleOrNull
-        private fun JsonObject.long(key: String) = (get(key) as? JsonPrimitive)?.longOrNull ?: num(key)?.toLong()
     }
 }

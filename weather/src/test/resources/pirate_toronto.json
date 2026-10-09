@@ -1,88 +1,94 @@
 {
- "latitude": 43.65,
- "longitude": -79.38,
- "timezone": "America/Toronto",
- "offset": -4.0,
- "currently": {
-  "time": 1791300600,
-  "summary": "Partly Cloudy",
-  "icon": "partly-cloudy-day",
-  "temperature": 11.4,
-  "apparentTemperature": 8.2,
-  "humidity": 0.46,
-  "windSpeed": 11.2,
-  "windGust": 21.0,
-  "precipProbability": 0.0
- },
- "hourly": {
-  "data": [
-   {
-    "time": 1791295200,
-    "summary": "Clear",
-    "icon": "clear-day",
-    "temperature": 10.0,
-    "precipProbability": 0.0,
-    "windSpeed": 9.0
-   },
-   {
-    "time": 1791298800,
+  "latitude": 43.65,
+  "longitude": -79.38,
+  "timezone": "America/Toronto",
+  "offset": -4.0,
+  "currently": {
+    "time": 1791300600,
     "summary": "Partly Cloudy",
     "icon": "partly-cloudy-day",
-    "temperature": 11.0,
-    "precipProbability": 0.05,
-    "windSpeed": 11.0
-   },
-   {
-    "time": 1791302400,
-    "summary": "Light Rain",
-    "icon": "rain",
-    "temperature": 12.0,
-    "precipProbability": 0.6,
-    "windSpeed": 14.0
-   },
-   {
-    "time": 1791306000,
-    "summary": "Drizzle",
-    "icon": "rain",
-    "temperature": 12.5,
-    "precipProbability": 0.4,
-    "windSpeed": 13.0
-   }
-  ]
- },
- "daily": {
-  "data": [
-   {
-    "time": 1791259200,
-    "summary": "Rain in the afternoon",
-    "icon": "rain",
-    "temperatureHigh": 15.2,
-    "temperatureLow": 3.1,
-    "precipProbability": 0.7,
-    "windSpeed": 22.0,
-    "sunriseTime": 1791285660,
-    "sunsetTime": 1791326940
-   },
-   {
-    "time": 1791345600,
-    "summary": "Clear throughout the day",
-    "icon": "clear-day",
-    "temperatureHigh": 17.0,
-    "temperatureLow": 6.0,
-    "precipProbability": 0.0,
-    "windSpeed": 10.0,
-    "sunriseTime": 1791372120,
-    "sunsetTime": 1791413220
-   },
-   {
-    "time": 1791432000,
-    "summary": "Snow",
-    "icon": "snow",
-    "temperatureHigh": 1.0,
-    "temperatureLow": -3.0,
-    "precipProbability": 0.9,
-    "windSpeed": 30.0
-   }
-  ]
- }
+    "temperature": 11.4,
+    "apparentTemperature": 8.2,
+    "humidity": 0.46,
+    "windSpeed": 11.2,
+    "windGust": 21.0,
+    "precipProbability": 0.0
+  },
+  "hourly": {
+    "data": [
+      {
+        "time": 1791295200,
+        "summary": "Clear",
+        "icon": "clear-day",
+        "temperature": 10.0,
+        "precipProbability": 0.0,
+        "windSpeed": 9.0
+      },
+      {
+        "time": 1791298800,
+        "summary": "Partly Cloudy",
+        "icon": "partly-cloudy-day",
+        "temperature": 11.0,
+        "precipProbability": 0.05,
+        "windSpeed": 11.0
+      },
+      {
+        "time": 1791302400,
+        "summary": "Light Rain",
+        "icon": "rain",
+        "temperature": 12.0,
+        "precipProbability": 0.6,
+        "windSpeed": 14.0
+      },
+      {
+        "time": 1791306000,
+        "summary": "Drizzle",
+        "icon": "rain",
+        "temperature": 12.5,
+        "precipProbability": 0.4,
+        "windSpeed": 13.0
+      }
+    ]
+  },
+  "daily": {
+    "data": [
+      {
+        "time": 1791259200,
+        "summary": "Rain in the afternoon",
+        "icon": "rain",
+        "temperatureHigh": 15.2,
+        "temperatureLow": 3.1,
+        "precipProbability": 0.7,
+        "windSpeed": 22.0,
+        "sunriseTime": 1791285660,
+        "sunsetTime": 1791326940,
+        "temperatureMax": 15.8,
+        "temperatureMin": 2.4,
+        "windGust": 41.0
+      },
+      {
+        "time": 1791345600,
+        "summary": "Clear throughout the day.",
+        "icon": "clear-day",
+        "temperatureHigh": 17.0,
+        "temperatureLow": 6.0,
+        "precipProbability": 0.0,
+        "windSpeed": 10.0,
+        "sunriseTime": 1791372120,
+        "sunsetTime": 1791413220,
+        "temperatureMax": 17.3,
+        "temperatureMin": 5.6,
+        "windGust": 18.0
+      },
+      {
+        "time": 1791432000,
+        "summary": "Snow",
+        "icon": "snow",
+        "temperatureHigh": 1.0,
+        "temperatureLow": -3.0,
+        "precipProbability": 0.9,
+        "windSpeed": 30.0
+      }
+    ]
+  }
 }
