@@ -14,6 +14,7 @@ import com.hisbaan.orbit.audio.RouteStrategy
 import com.hisbaan.orbit.audio.VoiceGate
 import com.hisbaan.orbit.speech.OnDeviceStt
 import com.hisbaan.orbit.speech.TtsSpeaker
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,6 +50,7 @@ class TurnAudio(
     private val stopCapture = AtomicBoolean(false)
     private val captureEnded = AtomicBoolean(false)
     private val listener = AtomicReference<Channel<ShortArray>?>(null)
+    private val finish = AtomicReference<CompletableDeferred<Unit>?>(null)
     private val gate = VoiceGate()
     private var route: AudioRouter.Route? = null
     private var capture: Job? = null
@@ -106,11 +108,13 @@ class TurnAudio(
         if (captureEnded.get()) return Heard.MicUnavailable
         PcmPlayer.play(Earcons.listening(sounds, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, usage)
         val audio = Channel<ShortArray>(capacity = 500)
+        val finished = CompletableDeferred<Unit>().also(finish::set)
         gate.startListen()
         listener.set(audio)
         val result = try {
-            stt.listen(audio, MicCapture.SAMPLE_RATE, language = null, onPartial = onPartial)
+            stt.listen(audio, MicCapture.SAMPLE_RATE, language = null, onPartial = onPartial, finish = finished)
         } finally {
+            finish.set(null)
             listener.set(null)
             audio.close()
             log(gate.summary())
@@ -121,6 +125,10 @@ class TurnAudio(
             OnDeviceStt.Result.NoSpeech -> if (captureEnded.get()) Heard.MicUnavailable else Heard.Silence
             is OnDeviceStt.Result.Failed -> Heard.Failed(result.message)
         }
+    }
+
+    override fun finishListening() {
+        finish.get()?.complete(Unit)
     }
 
     override suspend fun say(text: String) {

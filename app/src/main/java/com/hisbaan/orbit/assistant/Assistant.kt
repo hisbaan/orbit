@@ -151,6 +151,21 @@ class Assistant(
     }
 
     /**
+     * The overlay's stop button: while listening, once words have been heard, ends the listen
+     * and sends them (before a voice in the background adds to or replaces them); at any other
+     * point cancels the turn. Closing the overlay always cancels.
+     */
+    fun stop() {
+        val state = _state.value
+        if (state.phase == Phase.LISTENING && state.partialTranscript.isNotBlank()) {
+            EventLog.log("turn", "Stop while listening: sending what was heard")
+            turnVoice?.finishListening()
+        } else {
+            cancel()
+        }
+    }
+
+    /**
      * Answers typed [text] on screen only: no microphone, no speech, no follow-up listening
      * (typing means talking out loud isn't an option). Replaces any turn in progress.
      */

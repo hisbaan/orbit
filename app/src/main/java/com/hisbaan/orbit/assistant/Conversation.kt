@@ -33,6 +33,9 @@ interface Voice {
     /** Listens for one utterance, with the listening sounds around it. */
     suspend fun listen(onPartial: (String) -> Unit): Heard
 
+    /** Ends the listen in progress now, with the words heard so far. */
+    fun finishListening() = Unit
+
     suspend fun say(text: String)
 
     /** Speaks each sentence as it arrives, until [sentences] is closed. */

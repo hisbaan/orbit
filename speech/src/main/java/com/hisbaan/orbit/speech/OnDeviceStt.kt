@@ -12,6 +12,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import com.hisbaan.orbit.diagnostics.EventLog
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -45,12 +46,15 @@ class OnDeviceStt(context: Context) {
     /**
      * Listens for one utterance. [audio] carries 16 kHz mono PCM16 chunks; pass null to let the
      * recognizer capture itself. [language] is a BCP-47 tag, null for the device default.
+     * Completing [finish] ends the utterance with the words heard so far, as last shown by
+     * [onPartial], rather than waiting for the recognizer's final (and possibly different) result.
      */
     suspend fun listen(
         audio: ReceiveChannel<ShortArray>?,
         sampleRate: Int,
         language: String?,
         onPartial: (String) -> Unit,
+        finish: Deferred<Unit>? = null,
         timeoutMs: Long = 20_000,
     ): Result = withContext(Dispatchers.Main) {
         if (!isAvailable) return@withContext Result.Failed("On-device speech recognition isn't available on this phone.")
@@ -169,6 +173,14 @@ class OnDeviceStt(context: Context) {
                             endInput("no words after ${(now - startedAt) / 1000}s")
                         }
                     }
+                }
+                if (finish != null) launch {
+                    finish.await()
+                    val heard = lastPartial
+                    if (heard == null) return@launch endInput("finished by the user before any words")
+                    EventLog.log("stt", "Finished by the user: ${EventLog.content("\"$heard\"")}")
+                    inputDone.set(true)
+                    result.complete(Result.Text(heard))
                 }
                 EventLog.log("stt", "Listening (${if (pipe != null) "fed from Orbit capture" else "recognizer mic"}, ${language ?: "default language"})")
                 recognizer.startListening(intent)

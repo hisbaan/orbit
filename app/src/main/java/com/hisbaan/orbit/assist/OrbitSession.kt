@@ -91,7 +91,7 @@ class OrbitSession(context: Context) :
             dismiss = ::close,
             talk = { app.assistant.trigger("overlay", null) },
             ask = app.assistant::ask,
-            stop = app.assistant::cancel,
+            stop = app.assistant::stop,
             typing = {
                 stopPanning()
                 app.assistant.stopListening()

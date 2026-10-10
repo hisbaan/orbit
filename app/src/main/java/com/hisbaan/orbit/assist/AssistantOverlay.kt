@@ -93,6 +93,7 @@ class OverlayActions(
     val dismiss: () -> Unit,
     val talk: () -> Unit,
     val ask: (String) -> Unit,
+    /** While listening with words heard: send them now. Otherwise: stop the turn. */
     val stop: () -> Unit,
     /** The user started typing: stop listening so the mic isn't fighting the keyboard. */
     val typing: () -> Unit,
@@ -153,7 +154,7 @@ private fun Card(state: AssistantState, actions: OverlayActions) {
         ) {
             Header(state.phase, actions.openApp)
             if (state.hasContent) Body(state, actions.openLink, Modifier.padding(end = 8.dp))
-            InputRow(state.phase, actions)
+            InputRow(state.phase, heard = state.phase == Phase.LISTENING && state.partialTranscript.isNotBlank(), actions)
         }
     }
 }
@@ -267,11 +268,11 @@ private fun ToolChip(label: String) {
 }
 
 /**
- * A text field and one round button: send when there's text, stop while Orbit is busy, and
- * otherwise the mic to talk again.
+ * A text field and one round button: send when there's text, or when Orbit has [heard] words
+ * (sending them as they are), stop while Orbit is busy, and otherwise the mic to talk again.
  */
 @Composable
-private fun InputRow(phase: Phase, actions: OverlayActions) {
+private fun InputRow(phase: Phase, heard: Boolean, actions: OverlayActions) {
     var text by rememberSaveable { mutableStateOf("") }
     val focus = LocalFocusManager.current
     fun send() {
@@ -309,15 +310,16 @@ private fun InputRow(phase: Phase, actions: OverlayActions) {
         val busy = phase != Phase.IDLE
         val (icon, description) = when {
             text.isNotBlank() -> R.drawable.ic_send to "Send"
+            heard -> R.drawable.ic_send to "Send what was heard"
             busy -> R.drawable.ic_stop to "Stop"
             else -> R.drawable.ic_mic to "Talk"
         }
         val container by animateColorAsState(
-            if (busy && text.isBlank()) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primary,
+            if (busy && !heard && text.isBlank()) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primary,
             label = "button",
         )
         val content by animateColorAsState(
-            if (busy && text.isBlank()) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimary,
+            if (busy && !heard && text.isBlank()) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimary,
             label = "buttonContent",
         )
         FilledIconButton(
