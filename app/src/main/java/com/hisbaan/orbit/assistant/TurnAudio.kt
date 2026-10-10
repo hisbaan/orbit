@@ -11,6 +11,7 @@ import com.hisbaan.orbit.audio.MicCapture
 import com.hisbaan.orbit.audio.PcmPlayer
 import com.hisbaan.orbit.audio.PlaybackUsage
 import com.hisbaan.orbit.audio.RouteStrategy
+import com.hisbaan.orbit.audio.VoiceGate
 import com.hisbaan.orbit.speech.OnDeviceStt
 import com.hisbaan.orbit.speech.TtsSpeaker
 import kotlinx.coroutines.CoroutineScope
@@ -30,7 +31,7 @@ import java.util.concurrent.atomic.AtomicReference
  * → one capture stream for the whole turn → listen and speak → stop capture → release the
  * route → wait for the HFP link to drop → abandon focus. The single capture stream keeps the
  * SCO link up between listening and speaking; its chunks go to the recognizer only while it
- * listens.
+ * listens, through a [VoiceGate] that silences voices farther away than the user's.
  *
  * [open] sets things up one by one and [close] undoes whatever it got to, so a turn cancelled
  * while starting (a second press, the user typing) leaves no focus or route behind.
@@ -48,6 +49,7 @@ class TurnAudio(
     private val stopCapture = AtomicBoolean(false)
     private val captureEnded = AtomicBoolean(false)
     private val listener = AtomicReference<Channel<ShortArray>?>(null)
+    private val gate = VoiceGate()
     private var route: AudioRouter.Route? = null
     private var capture: Job? = null
     private var linkWatch: Job? = null
@@ -71,8 +73,8 @@ class TurnAudio(
 
         if (captureMic) {
             capture = scope.launch {
-                MicCapture.record(CaptureSource.VOICE_RECOGNITION, null, stopCapture) { samples, count, _, _ ->
-                    listener.get()?.trySend(samples.copyOf(count))
+                MicCapture.record(CaptureSource.VOICE_RECOGNITION, null, stopCapture) { samples, count, rms, _ ->
+                    listener.get()?.trySend(if (gate.admit(count, rms)) samples.copyOf(count) else ShortArray(count))
                 }
                 if (!stopCapture.get()) {
                     // The mic couldn't be opened, or stopped mid-turn. End a listen in progress
@@ -104,12 +106,14 @@ class TurnAudio(
         if (captureEnded.get()) return Heard.MicUnavailable
         PcmPlayer.play(Earcons.listening(sounds, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, usage)
         val audio = Channel<ShortArray>(capacity = 500)
+        gate.startListen()
         listener.set(audio)
         val result = try {
             stt.listen(audio, MicCapture.SAMPLE_RATE, language = null, onPartial = onPartial)
         } finally {
             listener.set(null)
             audio.close()
+            log(gate.summary())
         }
         PcmPlayer.play(Earcons.done(sounds, MicCapture.SAMPLE_RATE), MicCapture.SAMPLE_RATE, usage)
         return when (result) {

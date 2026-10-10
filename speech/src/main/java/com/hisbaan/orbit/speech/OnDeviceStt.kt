@@ -116,6 +116,10 @@ class OnDeviceStt(context: Context) {
                     override fun onPartialResults(partialResults: Bundle) {
                         best(partialResults)?.takeIf { it.isNotBlank() }?.let {
                             if (it != lastPartial) wordsChangedAt = SystemClock.elapsedRealtime()
+                            // Logged when earlier words change, not on every new word: shows the
+                            // recognizer starting over (another voice replacing the user's).
+                            val kept = lastPartial?.substringBeforeLast(' ', "")
+                            if (!kept.isNullOrEmpty() && !it.startsWith(kept)) EventLog.log("stt", "Partial revised: ${EventLog.content("\"$it\"")}")
                             lastPartial = it
                             onPartial(it)
                         }
