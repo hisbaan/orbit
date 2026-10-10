@@ -46,6 +46,8 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
     }
 
     val command: Tool = object : HaTool() {
+        override val acts = true
+
         override val spec = ToolSpec(
             name = "home_command",
             description = "Hand a request in plain words to Home Assistant's own assistant, for what home_call_service " +
@@ -103,6 +105,8 @@ class HomeTools(private val connection: () -> HomeAssistant?, private val langua
     }
 
     val callService: Tool = object : HaTool() {
+        override val acts = true
+
         override val spec = ToolSpec(
             name = "home_call_service",
             description = "Control smart home devices through Home Assistant. Target a whole room with area (e.g. " +

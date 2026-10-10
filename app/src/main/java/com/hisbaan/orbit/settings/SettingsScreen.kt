@@ -205,6 +205,10 @@ fun SettingsScreen(
             WeatherSettings(draft, state.dirty, state.weatherStatus, vm)
         }
 
+        Section("Web search") {
+            WebSearchSettings(draft, state.dirty, state.searchStatus, vm)
+        }
+
         Section("Calendar") {
             CalendarSettings(draft, state.calendars, vm)
         }
@@ -331,6 +335,58 @@ private fun WeatherSettings(draft: AppSettings, dirty: Boolean, status: String?,
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = vm::testWeather) { Text("Test") }
         if (key != null) Button(onClick = { vm.save() }, enabled = dirty) { Text("Save") }
+    }
+    status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+}
+
+@Composable
+private fun WebSearchSettings(draft: AppSettings, dirty: Boolean, status: String?, vm: SettingsViewModel) {
+    var open by remember { mutableStateOf(false) }
+    val source = draft.webSearch
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Search with", modifier = Modifier.weight(1f))
+        Box {
+            TextButton(onClick = { open = true }) { Text(source.label) }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                SearchSource.entries.forEach { option ->
+                    DropdownMenuItem(text = { Text(option.label) }, onClick = {
+                        open = false
+                        vm.editAndSave { it.copy(webSearch = option) }
+                    })
+                }
+            }
+        }
+    }
+    Text(source.about, style = MaterialTheme.typography.bodySmall)
+    when (source) {
+        SearchSource.OFF -> return
+        SearchSource.TAVILY -> OutlinedTextField(
+            value = draft.tavilyKey,
+            onValueChange = { v -> vm.edit { it.copy(tavilyKey = v) } },
+            label = { Text("Tavily API key") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        SearchSource.SEARXNG -> OutlinedTextField(
+            value = draft.searxngUrl,
+            onValueChange = { v -> vm.edit { it.copy(searxngUrl = v) } },
+            label = { Text("Instance address") },
+            placeholder = { Text("https://search.example.com") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    Text(
+        "Web pages can carry instructions aimed at Orbit, so after reading results Orbit asks before doing anything " +
+            "(navigating, playing, controlling your home) in that reply.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = vm::testSearch) { Text("Test") }
+        Button(onClick = { vm.save() }, enabled = dirty) { Text("Save") }
     }
     status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 }

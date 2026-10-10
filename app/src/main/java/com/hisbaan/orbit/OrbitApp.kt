@@ -17,6 +17,7 @@ import com.hisbaan.orbit.homeassistant.HomeAssistant
 import com.hisbaan.orbit.homeassistant.HomeTools
 import com.hisbaan.orbit.settings.AppSettings
 import com.hisbaan.orbit.settings.SettingsRepository
+import com.hisbaan.orbit.settings.SearchSource
 import com.hisbaan.orbit.settings.WeatherSource
 import com.hisbaan.orbit.speech.TtsSpeaker
 import com.hisbaan.orbit.tools.CalendarAccess
@@ -39,10 +40,14 @@ import com.hisbaan.orbit.tools.SetAlarmTool
 import com.hisbaan.orbit.tools.SetTimerTool
 import com.hisbaan.orbit.tools.ShowWeatherCardTool
 import com.hisbaan.orbit.tools.WeatherTool
+import com.hisbaan.orbit.tools.WebSearchTool
 import com.hisbaan.orbit.weather.GoogleWeather
 import com.hisbaan.orbit.weather.OpenMeteo
 import com.hisbaan.orbit.weather.PirateWeather
 import com.hisbaan.orbit.weather.WeatherProvider
+import com.hisbaan.orbit.websearch.SearXng
+import com.hisbaan.orbit.websearch.SearchProvider
+import com.hisbaan.orbit.websearch.Tavily
 import com.hisbaan.orbit.ytmusic.YouTubeMusicSearch
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -98,6 +103,13 @@ class OrbitApp : Application() {
         WeatherSource.GOOGLE -> settings.googleWeatherKey.takeIf { it.isNotBlank() }?.let { GoogleWeather(httpClient, it) }
     } ?: openMeteo
 
+    /** The search backend [settings] choose, or null while it's off or not set up (web_search then hides itself). */
+    fun searchProvider(settings: AppSettings): SearchProvider? = when (settings.webSearch) {
+        SearchSource.OFF -> null
+        SearchSource.TAVILY -> settings.tavilyKey.takeIf { it.isNotBlank() }?.let { Tavily(httpClient, it) }
+        SearchSource.SEARXNG -> settings.searxngUrl.takeIf { it.isNotBlank() }?.let { SearXng(httpClient, it) }
+    }
+
     val tools by lazy {
         listOf(
             MediaControlTool(this, mediaSessions),
@@ -111,6 +123,8 @@ class OrbitApp : Application() {
             WeatherTool(this, openMeteo, provider = { weatherProvider(settings.current()) }, latest = latestForecast),
             ShowWeatherCardTool(this, latestForecast),
             ShowInfoCardTool(),
+            // Read synchronously like Home Assistant: tool lists are built before each model call.
+            WebSearchTool { settings.latest.value?.let(::searchProvider) },
             NotificationsTool(this),
             ReadScreenTool(this),
             CallContactTool(this),

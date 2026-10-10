@@ -1,0 +1,36 @@
+{
+  "query": "toronto marathon results",
+  "number_of_results": 0,
+  "results": [
+    {
+      "url": "https://www.torontowaterfrontmarathon.com/results/",
+      "title": "Results - TCS Toronto Waterfront Marathon",
+      "content": "Official results for the 2026 TCS Toronto Waterfront Marathon.",
+      "engine": "duckduckgo",
+      "engines": ["duckduckgo", "brave"],
+      "score": 4.0,
+      "category": "general"
+    },
+    {
+      "url": "https://www.torontowaterfrontmarathon.com/results",
+      "title": "Results | Toronto Waterfront Marathon",
+      "content": "Duplicate from another engine.",
+      "engine": "brave",
+      "score": 1.0,
+      "category": "general"
+    },
+    {
+      "url": "https://www.cbc.ca/news/canada/toronto/marathon-2026",
+      "title": "Kenyan runner wins Toronto marathon",
+      "content": null,
+      "engine": "bing",
+      "score": 0.8,
+      "category": "general"
+    }
+  ],
+  "answers": [],
+  "corrections": [],
+  "infoboxes": [],
+  "suggestions": [],
+  "unresponsive_engines": []
+}

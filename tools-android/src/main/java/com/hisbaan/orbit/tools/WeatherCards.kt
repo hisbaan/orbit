@@ -37,6 +37,7 @@ class LatestForecast {
 /** Shows the latest forecast as a card. Confirming: the spoken answer is its confirmation. */
 class ShowWeatherCardTool(private val context: Context, private val latest: LatestForecast) : Tool {
     override val confirms = true
+    override val acts = false
 
     override val spec = ToolSpec(
         name = "show_weather_card",

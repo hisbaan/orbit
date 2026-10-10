@@ -32,6 +32,21 @@ interface Tool {
     val privateResult: Boolean get() = false
 
     /**
+     * Changes something: plays, navigates, sets a timer, controls a device. Showing a card or
+     * looking something up doesn't. After an [untrustedResult] in the same message, the agent
+     * holds these for the user's yes. Confirming tools are actions unless they say otherwise;
+     * tools that always hold their action for a yes ([ToolOutcome.pending]) needn't say so.
+     */
+    val acts: Boolean get() = confirms
+
+    /**
+     * The result carries text that strangers wrote (web pages), which may try to steer the
+     * model. The agent holds [acts] tools for the user's yes for the rest of the message, and
+     * drops the result from the history once the message is answered. See [Agent].
+     */
+    val untrustedResult: Boolean get() = false
+
+    /**
      * Reads or acts on the user's private data (notifications, the screen, the calendar,
      * contacts), so it only runs on an unlocked phone: someone holding a locked phone mustn't
      * get at it by voice. The agent asks the user to unlock first. See [Agent].

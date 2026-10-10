@@ -35,6 +35,11 @@ sealed interface Card {
 
     data class Row(val label: String, val value: String)
 
+    /** Where a web answer came from. Tapping a source opens it; [Source.url]s are http(s) only. */
+    data class Sources(val query: String, val sources: List<Source>) : Card
+
+    data class Source(val title: String, val site: String, val url: String)
+
     companion object {
         val SKIES = listOf(
             "clear", "clear_night", "partly_cloudy", "partly_cloudy_night", "cloudy", "fog", "drizzle", "rain", "snow", "sleet",
@@ -46,6 +51,7 @@ sealed interface Card {
 /** Shows a titled list (calendar events, search results, a recipe's steps...). Also confirming. */
 class ShowInfoCardTool : Tool {
     override val confirms = true
+    override val acts = false
 
     override val spec = ToolSpec(
         name = "show_info_card",

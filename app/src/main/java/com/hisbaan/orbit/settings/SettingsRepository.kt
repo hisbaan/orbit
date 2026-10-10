@@ -59,6 +59,12 @@ data class AppSettings(
     /** API keys for the keyed weather providers. Stored encrypted. */
     val pirateWeatherKey: String = "",
     val googleWeatherKey: String = "",
+    /** Where web_search searches; off hides the tool. */
+    val webSearch: SearchSource = SearchSource.OFF,
+    /** Stored encrypted. */
+    val tavilyKey: String = "",
+    /** A SearXNG instance, e.g. `https://search.example.com`. */
+    val searxngUrl: String = "",
     /** Keep the conversation history (on a phone with a screen lock). See [com.hisbaan.orbit.history.HistoryStore]. */
     val keepHistory: Boolean = true,
     /**
@@ -78,6 +84,7 @@ data class AppSettings(
                 Secret.HOME_ASSISTANT -> homeAssistantUrl.isNotBlank()
                 Secret.PIRATE_WEATHER_KEY -> weatherProvider == WeatherSource.PIRATE_WEATHER
                 Secret.GOOGLE_WEATHER_KEY -> weatherProvider == WeatherSource.GOOGLE
+                Secret.TAVILY_KEY -> webSearch == SearchSource.TAVILY
             }
         }.sortedBy { it.ordinal }
 
@@ -93,6 +100,7 @@ enum class Secret(val label: String) {
     HOME_ASSISTANT("Home Assistant sign-in"),
     PIRATE_WEATHER_KEY("Pirate Weather key"),
     GOOGLE_WEATHER_KEY("Google Weather key"),
+    TAVILY_KEY("Tavily key"),
 }
 
 /** Where forecasts come from. Open-Meteo needs no key; the others use [AppSettings]' keys. */
@@ -100,6 +108,13 @@ enum class WeatherSource(val label: String, val about: String) {
     OPEN_METEO("Open-Meteo", "Free, no key needed."),
     PIRATE_WEATHER("Pirate Weather", "The source behind Merry Sky: high-resolution national models. Free key from pirateweather.net."),
     GOOGLE("Google", "The data behind Google's weather app. Needs a Google Cloud API key with the Weather API enabled (billed beyond Google's free usage)."),
+}
+
+/** Where web_search searches. More backends slot in here and in [com.hisbaan.orbit.OrbitApp.searchProvider]. */
+enum class SearchSource(val label: String, val about: String) {
+    OFF("Off", "Orbit answers from what its model already knows, which stops at the model's training."),
+    TAVILY("Tavily", "A search API made for assistants. Free key (1,000 searches a month) from tavily.com."),
+    SEARXNG("SearXNG", "Your own SearXNG instance, no key. Its settings.yml must allow JSON: search: formats: [html, json]."),
 }
 
 private val Context.settingsStore by preferencesDataStore(name = "settings")
@@ -139,6 +154,8 @@ class SettingsRepository(
         val ttsVoice = stringPreferencesKey("tts_voice")
         val defaultCalendarId = longPreferencesKey("default_calendar_id")
         val weatherProvider = stringPreferencesKey("weather_provider")
+        val webSearch = stringPreferencesKey("web_search")
+        val searxngUrl = stringPreferencesKey("searxng_url")
         val keepHistory = booleanPreferencesKey("keep_history")
 
         /** [Secret] names the user has set, so a restore without them can tell. */
@@ -154,6 +171,7 @@ class SettingsRepository(
         Secret.HOME_ASSISTANT to stringPreferencesKey("home_assistant_credential_encrypted"),
         Secret.PIRATE_WEATHER_KEY to stringPreferencesKey("pirate_weather_key_encrypted"),
         Secret.GOOGLE_WEATHER_KEY to stringPreferencesKey("google_weather_key_encrypted"),
+        Secret.TAVILY_KEY to stringPreferencesKey("tavily_key_encrypted"),
     )
 
     /** One update at a time: an update reads both stores and writes both. */
@@ -196,6 +214,8 @@ class SettingsRepository(
             if (new.ttsVoice != null) prefs[Keys.ttsVoice] = new.ttsVoice else prefs.remove(Keys.ttsVoice)
             if (new.defaultCalendarId != null) prefs[Keys.defaultCalendarId] = new.defaultCalendarId else prefs.remove(Keys.defaultCalendarId)
             prefs[Keys.weatherProvider] = new.weatherProvider.name
+            prefs[Keys.webSearch] = new.webSearch.name
+            prefs[Keys.searxngUrl] = new.searxngUrl.trim()
             prefs[Keys.keepHistory] = new.keepHistory
             prefs.remove(Keys.legacyAlertingDevices)
             // Set now, or set before and still to be re-entered.
@@ -246,6 +266,9 @@ class SettingsRepository(
             weatherProvider = plain[Keys.weatherProvider]?.let { name -> WeatherSource.entries.firstOrNull { it.name == name } } ?: WeatherSource.OPEN_METEO,
             pirateWeatherKey = values[Secret.PIRATE_WEATHER_KEY].orEmpty(),
             googleWeatherKey = values[Secret.GOOGLE_WEATHER_KEY].orEmpty(),
+            webSearch = plain[Keys.webSearch]?.let { name -> SearchSource.entries.firstOrNull { it.name == name } } ?: SearchSource.OFF,
+            tavilyKey = values[Secret.TAVILY_KEY].orEmpty(),
+            searxngUrl = plain[Keys.searxngUrl].orEmpty(),
             keepHistory = plain[Keys.keepHistory] ?: true,
             missingSecrets = set.filterTo(mutableSetOf()) { values[it] == null || (it == Secret.HOME_ASSISTANT && homeAssistant == null) },
         )
@@ -257,6 +280,7 @@ class SettingsRepository(
         Secret.HOME_ASSISTANT to encodeCredential(s.homeAssistant),
         Secret.PIRATE_WEATHER_KEY to s.pirateWeatherKey,
         Secret.GOOGLE_WEATHER_KEY to s.googleWeatherKey,
+        Secret.TAVILY_KEY to s.tavilyKey,
     )
 
     private fun decodeHeadsetSounds(entries: Set<String>): Map<String, EarconStyle> = entries.mapNotNull { entry ->

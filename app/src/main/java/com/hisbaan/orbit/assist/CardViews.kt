@@ -1,5 +1,6 @@
 package com.hisbaan.orbit.assist
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,7 +26,7 @@ import androidx.compose.ui.unit.sp
 import com.hisbaan.orbit.agent.Card
 import kotlin.math.roundToInt
 
-/** A card the assistant chose to show (see [Card]). Tapping one with a link opens it. */
+/** A card the assistant chose to show (see [Card]). Tapping one with a link, or a source, opens it. */
 @Composable
 fun CardView(card: Card, openLink: (String) -> Unit) {
     val link = (card as? Card.Weather)?.link
@@ -40,6 +41,7 @@ fun CardView(card: Card, openLink: (String) -> Unit) {
             when (card) {
                 is Card.Weather -> WeatherCard(card)
                 is Card.Info -> InfoCard(card)
+                is Card.Sources -> SourcesCard(card, openLink)
             }
         }
     }
@@ -131,6 +133,27 @@ private fun InfoCard(card: Card.Info) {
                     )
                     Text(row.value, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourcesCard(card: Card.Sources, openLink: (String) -> Unit) {
+    Column {
+        Text("Sources", style = MaterialTheme.typography.titleMedium)
+        Text(card.query, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Column {
+        card.sources.forEach { source ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { openLink(source.url) }
+                    .padding(vertical = 6.dp),
+            ) {
+                Text(source.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(source.site, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
             }
         }
     }

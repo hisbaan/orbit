@@ -16,5 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "orbit"
 include(":app")
-include(":diagnostics", ":providers", ":agent", ":ytmusic", ":weather", ":homeassistant")
+include(":diagnostics", ":providers", ":agent", ":ytmusic", ":weather", ":websearch", ":homeassistant")
 include(":audio", ":speech", ":tools-android")

@@ -43,6 +43,7 @@ dependencies {
     implementation(project(":tools-android"))
     implementation(project(":ytmusic"))
     implementation(project(":weather"))
+    implementation(project(":websearch"))
     implementation(project(":homeassistant"))
 
     implementation(libs.ktor.client.okhttp)

@@ -21,6 +21,7 @@ dependencies {
     api(project(":agent"))
     implementation(project(":ytmusic"))
     implementation(project(":weather"))
+    implementation(project(":websearch"))
     implementation(project(":diagnostics"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)

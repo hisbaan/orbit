@@ -116,4 +116,20 @@ class SettingsRepositoryTest {
         assertEquals("", settings.apiKey)
         assertEquals(setOf(Secret.API_KEY), settings.missingSecrets)
     }
+
+    @Test
+    fun `web search keeps its key with the secrets and its address with the settings`() = runBlocking {
+        val repo = repository()
+        repo.update { it.copy(webSearch = SearchSource.TAVILY, tavilyKey = "tvly-1", searxngUrl = " https://s.example.com ") }
+
+        val settings = repository().current()
+        assertEquals(SearchSource.TAVILY, settings.webSearch)
+        assertEquals("tvly-1", settings.tavilyKey)
+        assertEquals("https://s.example.com", settings.searxngUrl)
+        assertEquals("enc:tvly-1", secretsStore.data.first()[stringPreferencesKey("tavily_key_encrypted")])
+        // After a restore, the key only needs entering again while Tavily is chosen.
+        val restored = settings.copy(tavilyKey = "", missingSecrets = setOf(Secret.TAVILY_KEY))
+        assertEquals(listOf(Secret.TAVILY_KEY), restored.secretsToReenter)
+        assertTrue(restored.copy(webSearch = SearchSource.SEARXNG).secretsToReenter.isEmpty())
+    }
 }

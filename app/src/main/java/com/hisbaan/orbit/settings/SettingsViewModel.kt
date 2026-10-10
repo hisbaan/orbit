@@ -64,6 +64,7 @@ data class SettingsUiState(
     val headsets: List<Headset>? = null,
     val voices: List<VoiceOption> = emptyList(),
     val weatherStatus: String? = null,
+    val searchStatus: String? = null,
     /** Calendars new events can go to; null without calendar permission. */
     val calendars: List<CalendarAccess.Calendar>? = null,
     /** The phone has a screen lock, which the conversation history needs. */
@@ -343,6 +344,34 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 "${provider.name} failed: ${e.message}"
             }
             _state.update { it.copy(weatherStatus = status) }
+        }
+    }
+
+    // endregion
+
+    // region Web search
+
+    /** Runs a search with the backend and key or address as currently entered. */
+    fun testSearch() {
+        val draft = _state.value.draft ?: return
+        val provider = getApplication<OrbitApp>().searchProvider(draft) ?: run {
+            _state.update { it.copy(searchStatus = if (draft.webSearch == SearchSource.OFF) null else "Enter the ${draft.webSearch.label} details first.") }
+            return
+        }
+        _state.update { it.copy(searchStatus = "Testing…") }
+        viewModelScope.launch {
+            val status = try {
+                val started = System.currentTimeMillis()
+                val results = provider.search("weather", maxResults = 3, language = Locale.getDefault().language)
+                val ms = System.currentTimeMillis() - started
+                if (results.isEmpty()) "${provider.name} answered (${ms} ms) but found nothing."
+                else "${provider.name} works (${ms} ms): ${results.size} results, first from ${results.first().site}."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "${provider.name} failed: ${e.message}"
+            }
+            _state.update { it.copy(searchStatus = status) }
         }
     }
 
