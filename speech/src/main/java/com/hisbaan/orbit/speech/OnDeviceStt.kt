@@ -78,6 +78,7 @@ class OnDeviceStt(context: Context) {
         val result = CompletableDeferred<Result>()
         val inputDone = AtomicBoolean(false)
         var lastPartial: String? = null
+        val utterance = Utterance()
 
         try {
             coroutineScope {
@@ -119,8 +120,12 @@ class OnDeviceStt(context: Context) {
                     }
 
                     override fun onPartialResults(partialResults: Bundle) {
-                        logAlternatives("Segment alternatives", partialResults)
-                        best(partialResults)?.takeIf { it.isNotBlank() }?.let {
+                        val segmentDone = partialResults.getBoolean(SEGMENT_FINAL_KEY)
+                        if (segmentDone) logAlternatives("Segment done", partialResults, always = true)
+                        best(partialResults)?.takeIf { it.isNotBlank() }?.let { words ->
+                            if (segmentDone) utterance.segmentDone(words) else utterance.partial(words)
+                            utterance.text
+                        }?.let {
                             if (it != lastPartial) wordsChangedAt = SystemClock.elapsedRealtime()
                             // Logged when earlier words change, not on every new word: shows the
                             // recognizer starting over (another voice replacing the user's).
@@ -133,7 +138,7 @@ class OnDeviceStt(context: Context) {
 
                     override fun onResults(results: Bundle) {
                         logAlternatives("Result alternatives", results)
-                        val final = best(results)?.takeIf { it.isNotBlank() }
+                        val final = best(results)?.takeIf { it.isNotBlank() }?.let { utterance.result(it) }
                         val text = final ?: lastPartial
                         EventLog.log("stt", "Result: ${EventLog.content(text?.let { "\"$it\"" })}${if (final == null && text != null) " (last partial)" else ""}")
                         result.complete(if (text.isNullOrBlank()) Result.NoSpeech else Result.Text(text))
@@ -233,10 +238,10 @@ class OnDeviceStt(context: Context) {
     private fun best(bundle: Bundle): String? =
         pickHypothesis(bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().map { it.trim() })
 
-    /** Logs the ranked hypotheses when there's more than one, and which was taken if not the top. */
-    private fun logAlternatives(what: String, bundle: Bundle) {
+    /** Logs the ranked hypotheses when there's more than one (or [always]), and which was taken if not the top. */
+    private fun logAlternatives(what: String, bundle: Bundle, always: Boolean = false) {
         val ranked = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().map { it.trim() }
-        if (ranked.size < 2) return
+        if (ranked.isEmpty() || ranked.size < 2 && !always) return
         val picked = pickHypothesis(ranked)
         EventLog.log("stt", "$what: ${EventLog.content(ranked.joinToString { "\"$it\"" })}" +
             if (picked != ranked.first()) "; took ${EventLog.content("\"$picked\"")}" else "")
@@ -244,6 +249,8 @@ class OnDeviceStt(context: Context) {
 
     private companion object {
         const val MAX_RESULTS = 5
+        /** Set on a partial that finishes a segment (not a public constant; seen from the on-device recognizer). */
+        const val SEGMENT_FINAL_KEY = "final_result"
         /** Silence after the recognizer's end-of-speech before Orbit ends the utterance. */
         const val END_SILENCE_MS = 1_000L
         /** No new words for this long ends the utterance even while the recognizer still hears sound. */

@@ -37,7 +37,8 @@ import kotlinx.serialization.json.jsonObject
  * `--es tool stt --es text "set volume to 20 percent"` speaks the text with the phone's TTS into
  * a file and feeds it to the on-device recognizer as a listen would, logging every partial.
  * `--ei tail <ms>` is how long the audio runs on after the speech (default 4000), then the
- * stream closes; `--ei noise <dBFS>` lays white noise under all of it.
+ * stream closes; `--ei noise <dBFS>` lays white noise under all of it. A `|` in the text is a
+ * pause (`--ei pause <ms>`, default 800): "set an alarm for 7 30|am".
  */
 class DebugToolReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -70,7 +71,7 @@ class DebugToolReceiver : BroadcastReceiver() {
                 if (name == "playFromSearch") {
                     rawPlayFromSearch(app, intent.getStringExtra("query").orEmpty(), intent.getStringExtra("focus"), intent.getStringExtra("pkg"))
                 } else if (name == "stt") {
-                    recognizeSpoken(app, intent.getStringExtra("text").orEmpty(), intent.getIntExtra("tail", 4_000), intent.getIntExtra("noise", 0))
+                    recognizeSpoken(app, intent.getStringExtra("text").orEmpty(), intent.getIntExtra("tail", 4_000), intent.getIntExtra("noise", 0), intent.getIntExtra("pause", 800))
                 } else if (name == "browse") {
                     probeBrowser(app, intent.getStringExtra("pkg") ?: "com.google.android.apps.youtube.music")
                 } else {
@@ -102,9 +103,13 @@ class DebugToolReceiver : BroadcastReceiver() {
     }
 
     /** Synthesizes [text] and runs it through [OnDeviceStt] at real-time pace, between stretches of silence. */
-    private suspend fun recognizeSpoken(app: OrbitApp, text: String, tailMs: Int, noiseDbfs: Int) {
+    private suspend fun recognizeSpoken(app: OrbitApp, text: String, tailMs: Int, noiseDbfs: Int, pauseMs: Int) {
         val rate = com.hisbaan.orbit.audio.MicCapture.SAMPLE_RATE
-        val speech = synthesize(app, text) ?: return EventLog.log("debug", "stt: synthesis failed")
+        var speech = ShortArray(0)
+        for ((n, piece) in text.split('|').withIndex()) {
+            if (n > 0) speech += ShortArray(rate * pauseMs / 1000)
+            speech += synthesize(app, piece.trim()) ?: return EventLog.log("debug", "stt: synthesis failed")
+        }
         val chunk = rate / 50
         val audio = kotlinx.coroutines.channels.Channel<ShortArray>(capacity = 500)
         app.appScope.launch {
