@@ -37,7 +37,11 @@ class VoiceGate(private val marginDb: Float = DEFAULT_MARGIN_DB) {
     private var samples = 0L
     private var heldBack = 0L
     private var spanStart = -1L
-    private val spans = mutableListOf<LongRange>()
+    private var spanLoudest = Float.NEGATIVE_INFINITY
+    private val spans = mutableListOf<Span>()
+
+    /** Audio held back, and the loudest it got: how far below the voice the gate cut. */
+    private class Span(val samples: LongRange, val loudestDb: Float)
 
     /** Starts a listen: the voice level and floor carry over; the last listen's audio doesn't. */
     @Synchronized
@@ -74,9 +78,14 @@ class VoiceGate(private val marginDb: Float = DEFAULT_MARGIN_DB) {
 
         if (!pass) {
             heldBack += count
-            if (spanStart < 0) spanStart = samples
+            if (spanStart < 0) {
+                spanStart = samples
+                spanLoudest = level
+            } else {
+                spanLoudest = max(spanLoudest, level)
+            }
         } else if (spanStart >= 0) {
-            spans += spanStart until samples
+            spans += Span(spanStart until samples, spanLoudest)
             spanStart = -1
         }
         samples += count
@@ -88,12 +97,14 @@ class VoiceGate(private val marginDb: Float = DEFAULT_MARGIN_DB) {
     fun summary(): String {
         val floor = if (floorDb.isNaN()) "?" else "%.0f".format(floorDb)
         if (voiceDb == Float.NEGATIVE_INFINITY) return "Voice gate: hadn't heard enough of the voice to gate (floor $floor dBFS)"
-        val all = spans + listOfNotNull(if (spanStart >= 0) spanStart until samples else null)
-        val shown = all.filter { it.last - it.first >= MicCapture.SAMPLE_RATE / 5 }
+        val all = spans + listOfNotNull(if (spanStart >= 0) Span(spanStart until samples, spanLoudest) else null)
+        val shown = all.filter { it.samples.last - it.samples.first >= MicCapture.SAMPLE_RATE / 5 }
         return "Voice gate: voice %.0f dBFS, floor %s, passing above %.0f; held back %d%%".format(
             voiceDb, floor, voiceDb - marginDb, if (samples > 0) heldBack * 100 / samples else 0,
         ) + if (shown.isEmpty()) "" else shown.take(MAX_SPANS_LOGGED).joinToString(prefix = " (", postfix = if (shown.size > MAX_SPANS_LOGGED) ", …)" else ")") {
-            "%.1f-%.1fs".format(it.first / MicCapture.SAMPLE_RATE.toFloat(), (it.last + 1) / MicCapture.SAMPLE_RATE.toFloat())
+            "%.1f-%.1fs up to %.0f".format(
+                it.samples.first / MicCapture.SAMPLE_RATE.toFloat(), (it.samples.last + 1) / MicCapture.SAMPLE_RATE.toFloat(), it.loudestDb,
+            )
         }
     }
 

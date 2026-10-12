@@ -32,6 +32,7 @@ class VoiceGateTest {
         assertTrue("hangover keeps the user's word endings", tv.take(10).all { it })
         assertTrue("the TV is held back after it", tv.drop(20).none { it })
         assertTrue(gate.summary(), gate.summary().contains("voice -20 dBFS"))
+        assertTrue(gate.summary(), gate.summary().contains("up to -40)"))
     }
 
     @Test

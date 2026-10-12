@@ -33,6 +33,11 @@ import kotlinx.serialization.json.jsonObject
  *
  * `--es tool say --es text "what's the capital of France"` runs a full voice turn with that
  * text in place of the first listen (route, model, streamed speech, follow-ups).
+ *
+ * `--es tool stt --es text "set volume to 20 percent"` speaks the text with the phone's TTS into
+ * a file and feeds it to the on-device recognizer as a listen would, logging every partial.
+ * `--ei tail <ms>` is how long the audio runs on after the speech (default 4000), then the
+ * stream closes; `--ei noise <dBFS>` lays white noise under all of it.
  */
 class DebugToolReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -64,6 +69,8 @@ class DebugToolReceiver : BroadcastReceiver() {
             try {
                 if (name == "playFromSearch") {
                     rawPlayFromSearch(app, intent.getStringExtra("query").orEmpty(), intent.getStringExtra("focus"), intent.getStringExtra("pkg"))
+                } else if (name == "stt") {
+                    recognizeSpoken(app, intent.getStringExtra("text").orEmpty(), intent.getIntExtra("tail", 4_000), intent.getIntExtra("noise", 0))
                 } else if (name == "browse") {
                     probeBrowser(app, intent.getStringExtra("pkg") ?: "com.google.android.apps.youtube.music")
                 } else {
@@ -92,6 +99,82 @@ class DebugToolReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }
+    }
+
+    /** Synthesizes [text] and runs it through [OnDeviceStt] at real-time pace, between stretches of silence. */
+    private suspend fun recognizeSpoken(app: OrbitApp, text: String, tailMs: Int, noiseDbfs: Int) {
+        val rate = com.hisbaan.orbit.audio.MicCapture.SAMPLE_RATE
+        val speech = synthesize(app, text) ?: return EventLog.log("debug", "stt: synthesis failed")
+        val chunk = rate / 50
+        val audio = kotlinx.coroutines.channels.Channel<ShortArray>(capacity = 500)
+        app.appScope.launch {
+            val all = ShortArray(rate) + speech + ShortArray(rate * tailMs / 1000)
+            if (noiseDbfs < 0) {
+                val amp = 32767 * Math.pow(10.0, noiseDbfs / 20.0) * Math.sqrt(3.0)
+                for (i in all.indices) all[i] = (all[i] + (Math.random() * 2 - 1) * amp).toInt().coerceIn(-32768, 32767).toShort()
+            }
+            for (i in all.indices step chunk) {
+                if (audio.trySend(all.copyOfRange(i, minOf(i + chunk, all.size))).isClosed) break
+                kotlinx.coroutines.delay(20)
+            }
+            audio.close()
+        }
+        EventLog.log("debug", "stt: feeding ${speech.size * 1000L / rate}ms of \"$text\", tail ${tailMs}ms, noise $noiseDbfs")
+        val result = com.hisbaan.orbit.speech.OnDeviceStt(app).listen(audio, rate, language = null, onPartial = {
+            EventLog.log("debug", "stt partial: \"$it\"")
+        })
+        audio.cancel()
+        EventLog.log("debug", "stt result: $result")
+    }
+
+    /** [text] spoken by the phone's TTS, at the capture rate. */
+    private suspend fun synthesize(app: OrbitApp, text: String): ShortArray? {
+        val file = java.io.File(app.cacheDir, "stt-test.wav")
+        val synthesized = CompletableDeferred<Boolean>()
+        lateinit var tts: android.speech.tts.TextToSpeech
+        withContext(Dispatchers.Main) {
+            tts = android.speech.tts.TextToSpeech(app) { status ->
+                if (status != android.speech.tts.TextToSpeech.SUCCESS) return@TextToSpeech synthesized.complete(false).let { }
+                tts.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(id: String?) = Unit
+                    override fun onDone(id: String?) { synthesized.complete(true) }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(id: String?) { synthesized.complete(false) }
+                })
+                tts.synthesizeToFile(text, Bundle(), file, "stt-test")
+            }
+        }
+        val ok = withTimeoutOrNull(15_000) { synthesized.await() } == true
+        tts.shutdown()
+        return if (ok) wavTo16k(file.readBytes(), com.hisbaan.orbit.audio.MicCapture.SAMPLE_RATE) else null
+    }
+
+    /** PCM16 WAV (any rate, first channel) resampled linearly to [rate]. */
+    private fun wavTo16k(bytes: ByteArray, rate: Int): ShortArray {
+        val buf = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        var pos = 12
+        var srcRate = rate
+        var channels = 1
+        while (pos + 8 <= bytes.size) {
+            val id = String(bytes, pos, 4)
+            val size = buf.getInt(pos + 4)
+            if (id == "fmt ") {
+                channels = buf.getShort(pos + 10).toInt()
+                srcRate = buf.getInt(pos + 12)
+            } else if (id == "data") {
+                val n = minOf(size, bytes.size - pos - 8) / 2 / channels
+                val src = ShortArray(n) { buf.getShort(pos + 8 + it * 2 * channels) }
+                val out = (n.toLong() * rate / srcRate).toInt()
+                return ShortArray(out) {
+                    val x = it.toDouble() * srcRate / rate
+                    val i = x.toInt().coerceAtMost(n - 2)
+                    val f = x - i
+                    (src[i] * (1 - f) + src[i + 1] * f).toInt().toShort()
+                }
+            }
+            pos += 8 + size
+        }
+        return ShortArray(0)
     }
 
     /** Connects to a player's MediaBrowserService and logs whether it lets Orbit browse. */

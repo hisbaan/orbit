@@ -63,7 +63,8 @@ class OnDeviceStt(context: Context) {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            // Alternatives, for what the top hypothesis drops (see pickHypothesis).
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, MAX_RESULTS)
             language?.let { putExtra(RecognizerIntent.EXTRA_LANGUAGE, it) }
             if (pipe != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipe[0])
@@ -118,6 +119,7 @@ class OnDeviceStt(context: Context) {
                     }
 
                     override fun onPartialResults(partialResults: Bundle) {
+                        logAlternatives("Segment alternatives", partialResults)
                         best(partialResults)?.takeIf { it.isNotBlank() }?.let {
                             if (it != lastPartial) wordsChangedAt = SystemClock.elapsedRealtime()
                             // Logged when earlier words change, not on every new word: shows the
@@ -130,8 +132,10 @@ class OnDeviceStt(context: Context) {
                     }
 
                     override fun onResults(results: Bundle) {
-                        val text = best(results)?.takeIf { it.isNotBlank() } ?: lastPartial
-                        EventLog.log("stt", "Result: ${EventLog.content(text?.let { "\"$it\"" })}")
+                        logAlternatives("Result alternatives", results)
+                        val final = best(results)?.takeIf { it.isNotBlank() }
+                        val text = final ?: lastPartial
+                        EventLog.log("stt", "Result: ${EventLog.content(text?.let { "\"$it\"" })}${if (final == null && text != null) " (last partial)" else ""}")
                         result.complete(if (text.isNullOrBlank()) Result.NoSpeech else Result.Text(text))
                     }
 
@@ -227,9 +231,19 @@ class OnDeviceStt(context: Context) {
     }
 
     private fun best(bundle: Bundle): String? =
-        bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim()
+        pickHypothesis(bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().map { it.trim() })
+
+    /** Logs the ranked hypotheses when there's more than one, and which was taken if not the top. */
+    private fun logAlternatives(what: String, bundle: Bundle) {
+        val ranked = bundle.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty().map { it.trim() }
+        if (ranked.size < 2) return
+        val picked = pickHypothesis(ranked)
+        EventLog.log("stt", "$what: ${EventLog.content(ranked.joinToString { "\"$it\"" })}" +
+            if (picked != ranked.first()) "; took ${EventLog.content("\"$picked\"")}" else "")
+    }
 
     private companion object {
+        const val MAX_RESULTS = 5
         /** Silence after the recognizer's end-of-speech before Orbit ends the utterance. */
         const val END_SILENCE_MS = 1_000L
         /** No new words for this long ends the utterance even while the recognizer still hears sound. */
