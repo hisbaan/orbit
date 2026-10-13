@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -148,12 +149,10 @@ private fun Card(state: AssistantState, actions: OverlayActions) {
         shadowElevation = 8.dp,
         modifier = Modifier.fillMaxWidth().activityGlow(state.phase),
     ) {
-        Column(
-            modifier = Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 12.dp).animateContentSize(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
+        Column(Modifier.padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)) {
             Header(state.phase, actions.openApp)
-            if (state.hasContent) Body(state, actions.openLink, Modifier.padding(end = 8.dp))
+            Spacer(Modifier.height(10.dp))
+            Body(state, actions.openLink, Modifier.padding(end = 8.dp))
             InputRow(state.phase, heard = state.phase == Phase.LISTENING && state.partialTranscript.isNotBlank(), actions)
         }
     }
@@ -222,6 +221,16 @@ private fun Header(phase: Phase, openApp: () -> Unit) {
 
 @Composable
 private fun Body(state: AssistantState, openLink: (String) -> Unit, modifier: Modifier = Modifier) {
+    // The card animates its size here, so the input row below follows it and slides rather than
+    // jumping. Not while a card animates its own (sources opening): chasing that, it would lag.
+    val resizes = remember { CardResizes() }
+    Box(if (resizes.running) modifier else modifier.animateContentSize()) {
+        if (state.hasContent) BodyContent(state, openLink, resizes, Modifier.padding(bottom = 10.dp))
+    }
+}
+
+@Composable
+private fun BodyContent(state: AssistantState, openLink: (String) -> Unit, resizes: CardResizes, modifier: Modifier) {
     // Cards can make this tall: cap it and let it scroll, keeping the input row in view.
     Column(modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         val heard = state.transcript ?: state.partialTranscript.takeIf { it.isNotBlank() }
@@ -244,7 +253,7 @@ private fun Body(state: AssistantState, openLink: (String) -> Unit, modifier: Mo
                 modifier = Modifier.heightIn(max = 220.dp).verticalScroll(scroll),
             )
         }
-        state.cards.forEach { CardView(it, openLink) }
+        state.cards.forEach { CardView(it, openLink, resizes) }
         val used = state.actions.filterNot { it.startsWith("show_") }.map(::toolLabel).distinct()
         if (used.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
