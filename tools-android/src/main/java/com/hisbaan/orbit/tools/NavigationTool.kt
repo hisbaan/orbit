@@ -16,14 +16,14 @@ import com.hisbaan.orbit.providers.ToolSpec
 import kotlinx.serialization.json.JsonObject
 
 /**
- * Turn-by-turn navigation in Google Maps (`google.navigation:`), falling back to any map app
- * (`geo:`). After turn: Maps voice guidance takes audio focus.
+ * Turn-by-turn navigation in Google Maps (a `dir_action=navigate` Maps URL), falling back to any
+ * map app (`geo:`). After turn: Maps voice guidance takes audio focus.
  */
 class NavigationTool(private val context: Context) : Tool {
     override val confirms = true
 
-    // Google Maps navigation intent modes. Two-wheeler is only offered in some countries.
-    private val modes = mapOf("driving" to "d", "two_wheeler" to "l", "bicycling" to "b", "walking" to "w")
+    // Maps URL travel modes. Without one, Maps uses the user's own preferred mode.
+    private val modes = listOf("driving", "bicycling", "walking")
 
     override val spec = ToolSpec(
         name = "navigate",
@@ -31,14 +31,18 @@ class NavigationTool(private val context: Context) : Tool {
         parameters = objectSchema(
             listOf("destination"),
             "destination" to stringProperty("Address, place name or search like 'nearest gas station'"),
-            "mode" to stringProperty("Travel mode; default driving", modes.keys.toList()),
+            "mode" to stringProperty(
+                "Travel mode, only if the user names one; leave out to use their Maps default",
+                modes,
+            ),
         ),
     )
 
     override suspend fun invoke(args: JsonObject): ToolOutcome {
         val destination = args.requireString("destination")
-        val mode = modes[args.string("mode")] ?: "d"
-        val maps = Intent(Intent.ACTION_VIEW, "google.navigation:q=${Uri.encode(destination)}&mode=$mode".toUri())
+        val mode = args.string("mode")?.takeIf { it in modes }?.let { "&travelmode=$it" }.orEmpty()
+        val url = "https://www.google.com/maps/dir/?api=1&destination=${Uri.encode(destination)}&dir_action=navigate$mode"
+        val maps = Intent(Intent.ACTION_VIEW, url.toUri())
             .setPackage(GOOGLE_MAPS)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val generic = Intent(Intent.ACTION_VIEW, "geo:0,0?q=${Uri.encode(destination)}".toUri())
