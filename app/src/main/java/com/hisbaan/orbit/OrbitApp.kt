@@ -24,6 +24,7 @@ import com.hisbaan.orbit.tools.CalendarAccess
 import com.hisbaan.orbit.tools.CalendarEventsTool
 import com.hisbaan.orbit.tools.CallContactTool
 import com.hisbaan.orbit.tools.CreateCalendarEventTool
+import com.hisbaan.orbit.tools.CreateReminderTool
 import com.hisbaan.orbit.tools.CurrentTimeTool
 import com.hisbaan.orbit.tools.DeleteCalendarEventTool
 import com.hisbaan.orbit.tools.LatestForecast
@@ -119,6 +120,7 @@ class OrbitApp : Application() {
             NavigationTool(this),
             SetTimerTool(this),
             SetAlarmTool(this),
+            CreateReminderTool(this),
             CurrentTimeTool(),
             WeatherTool(this, openMeteo, provider = { weatherProvider(settings.current()) }, latest = latestForecast),
             ShowWeatherCardTool(this, latestForecast),

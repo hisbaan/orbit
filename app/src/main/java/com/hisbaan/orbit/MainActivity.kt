@@ -51,6 +51,7 @@ import com.hisbaan.orbit.miclab.MicLabScreen
 import com.hisbaan.orbit.miclab.MicLabViewModel
 import com.hisbaan.orbit.settings.SettingsScreen
 import com.hisbaan.orbit.settings.SettingsViewModel
+import com.hisbaan.orbit.tools.ScreenControlService
 import com.hisbaan.orbit.ui.OrbitTheme
 import kotlinx.coroutines.launch
 
@@ -67,6 +68,7 @@ class MainActivity : ComponentActivity() {
     private var missingPermissions by mutableStateOf(emptyList<String>())
     private var isDefaultAssistant by mutableStateOf(true)
     private var hasMediaAccess by mutableStateOf(true)
+    private var canTapForYou by mutableStateOf(true)
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         refreshSetup()
@@ -138,6 +140,7 @@ class MainActivity : ComponentActivity() {
             grantPermissions = ::requestPermissions,
             openAssistantSettings = ::openAssistantSettings,
             openMediaAccessSettings = ::openMediaAccessSettings,
+            openAccessibilitySettings = ::openAccessibilitySettings,
             openSettings = { whenUnlocked { screen = Screen.SETTINGS } },
             openMicLab = { whenUnlocked { screen = Screen.MIC_LAB } },
         )
@@ -156,6 +159,7 @@ class MainActivity : ComponentActivity() {
                     isDefaultAssistant,
                     settings?.isProviderConfigured ?: true,
                     hasMediaAccess,
+                    canTapForYou,
                     settings?.secretsToReenter?.map { it.label }.orEmpty(),
                 ),
                 actions = assistantActions,
@@ -289,6 +293,7 @@ class MainActivity : ComponentActivity() {
         }.map { it.second }.distinct() // read and write calendar share a label
         isDefaultAssistant = getSystemService(RoleManager::class.java)?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
         hasMediaAccess = app.mediaSessions.hasAccess
+        canTapForYou = ScreenControlService.isEnabled(this)
         // Only while it's open: the first touch builds Mic Lab, which starts listening to audio events.
         if (screen == Screen.MIC_LAB) micLab.refresh()
     }
@@ -311,6 +316,11 @@ class MainActivity : ComponentActivity() {
         val detail = Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
             .putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, component)
         startActivity(if (detail.resolveActivity(packageManager) != null) detail else Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+
+    /** The list, not Orbit's own page: opening a service's page directly is for system apps only. */
+    private fun openAccessibilitySettings() {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 
     private fun copyLog() {

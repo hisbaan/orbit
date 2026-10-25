@@ -20,6 +20,10 @@
         <intent>
             <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
         </intent>
+        <!-- CreateReminderTool checks Google Tasks (or another reminder app) takes reminders. -->
+        <intent>
+            <action android:name="android.intent.action.CREATE_REMINDER" />
+        </intent>
     </queries>
 
     <application>
@@ -35,6 +39,20 @@
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
+        </service>
+
+        <!-- Presses buttons in other apps' UI, e.g. Save in Google Tasks' new-task sheet. -->
+        <service
+            android:name=".ScreenControlService"
+            android:exported="true"
+            android:label="Orbit"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/screen_control_service" />
         </service>
     </application>
 </manifest>

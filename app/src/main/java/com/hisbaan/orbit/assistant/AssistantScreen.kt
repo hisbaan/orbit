@@ -28,11 +28,13 @@ data class SetupStatus(
     val isDefaultAssistant: Boolean,
     val providerConfigured: Boolean,
     val hasMediaAccess: Boolean,
+    /** Orbit's accessibility service, which taps Save on reminders in Google Tasks. */
+    val canTapForYou: Boolean,
     /** Keys and sign-ins to enter again, e.g. after moving to a new phone ("API key"). */
     val secretsToReenter: List<String> = emptyList(),
 ) {
     val complete: Boolean
-        get() = missingPermissions.isEmpty() && isDefaultAssistant && providerConfigured && hasMediaAccess && secretsToReenter.isEmpty()
+        get() = missingPermissions.isEmpty() && isDefaultAssistant && providerConfigured && hasMediaAccess && canTapForYou && secretsToReenter.isEmpty()
 }
 
 class AssistantActions(
@@ -41,6 +43,7 @@ class AssistantActions(
     val grantPermissions: () -> Unit,
     val openAssistantSettings: () -> Unit,
     val openMediaAccessSettings: () -> Unit,
+    val openAccessibilitySettings: () -> Unit,
     val openSettings: () -> Unit,
     val openMicLab: () -> Unit,
 )
@@ -107,6 +110,10 @@ private fun SetupCard(setup: SetupStatus, actions: AssistantActions) {
             if (!setup.hasMediaAccess) {
                 Text("Allow notification access so Orbit can control music directly (play, shuffle, what's playing) and read your notifications to you.")
                 OutlinedButton(onClick = actions.openMediaAccessSettings) { Text("Notification access") }
+            }
+            if (!setup.canTapForYou) {
+                Text("Turn on Orbit's accessibility service so it can press Save on the reminders it adds to Google Tasks. If it's greyed out: App info, ⋮, Allow restricted settings.")
+                OutlinedButton(onClick = actions.openAccessibilitySettings) { Text("Accessibility") }
             }
             if (setup.secretsToReenter.isNotEmpty()) {
                 Text("Enter again: ${setup.secretsToReenter.joinToString()}. Keys and sign-ins stay on the phone they were entered on, so a backup restores everything but them.")
