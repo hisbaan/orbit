@@ -76,6 +76,10 @@ class OrbitSession(context: Context) :
             // (see stopPanning).
             it.setWindowAnimations(0)
             WindowCompat.setDecorFitsSystemWindows(it, false)
+            // The session theme asks for translucent bars, which the system shades on top of the
+            // scrim; the overlay draws its own.
+            it.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS or WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION)
+            it.isNavigationBarContrastEnforced = false
         }
         savedState.performAttach()
         savedState.performRestore(null)

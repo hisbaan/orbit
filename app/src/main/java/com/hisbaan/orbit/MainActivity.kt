@@ -53,6 +53,7 @@ import com.hisbaan.orbit.settings.SettingsScreen
 import com.hisbaan.orbit.settings.SettingsViewModel
 import com.hisbaan.orbit.tools.ScreenControlService
 import com.hisbaan.orbit.ui.OrbitTheme
+import com.hisbaan.orbit.ui.scrollingScreenInsets
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -79,6 +80,8 @@ class MainActivity : ComponentActivity() {
         // Back on the screen the user was on after a rotation (onResume still leaves Settings if locked).
         savedInstanceState?.getString(STATE_SCREEN)?.let { name -> Screen.entries.firstOrNull { it.name == name } }?.let { screen = it }
         enableEdgeToEdge()
+        // Otherwise the system shades the nav bar to keep the handle visible; it reads as a dark band.
+        window.isNavigationBarContrastEnforced = false
         if (savedInstanceState == null) handleTrigger(intent, "onCreate")
 
         setContent {
@@ -86,11 +89,11 @@ class MainActivity : ComponentActivity() {
                 BackHandler(enabled = screen != Screen.ASSISTANT) { screen = if (screen == Screen.HISTORY) Screen.SETTINGS else Screen.ASSISTANT }
                 when (screen) {
                     Screen.ASSISTANT -> AssistantContent()
-                    Screen.SETTINGS -> Scaffold { padding ->
+                    Screen.SETTINGS -> Scaffold(contentWindowInsets = scrollingScreenInsets()) { padding ->
                         val state by settingsVm.state.collectAsStateWithLifecycle()
                         SettingsScreen(state, settingsVm, onBack = { screen = Screen.ASSISTANT }, onOpenHistory = ::openHistory, Modifier.padding(padding))
                     }
-                    Screen.HISTORY -> Scaffold { padding ->
+                    Screen.HISTORY -> Scaffold(contentWindowInsets = scrollingScreenInsets()) { padding ->
                         // Kept out of screenshots, screen recordings and the recent apps preview.
                         DisposableEffect(Unit) {
                             window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)

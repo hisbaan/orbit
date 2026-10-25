@@ -6,8 +6,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -56,7 +62,7 @@ fun HistoryScreen(state: HistoryUiState, actions: HistoryActions, modifier: Modi
 
 @Composable
 private fun ConversationList(state: HistoryUiState, actions: HistoryActions, modifier: Modifier) {
-    Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier.fillMaxSize().padding(start = 16.dp, top = 16.dp, end = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Conversation history", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
             TextButton(onClick = actions.back) { Text("Done") }
@@ -73,7 +79,10 @@ private fun ConversationList(state: HistoryUiState, actions: HistoryActions, mod
             }
             !state.unlocked -> Button(onClick = actions.unlock) { Text("Unlock") }
             state.conversations.isEmpty() -> Text("Nothing yet.")
-            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            else -> LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = WindowInsets.navigationBars.only(WindowInsetsSides.Bottom).add(WindowInsets(bottom = 16.dp)).asPaddingValues(),
+            ) {
                 if (state.incomplete) {
                     item { Text("Older conversations didn't load in time. Leave and open the history again to see them.", style = MaterialTheme.typography.bodySmall) }
                 }
@@ -123,7 +132,7 @@ private fun ConversationDetail(conversation: StoredConversation, actions: Histor
         }
         Text(HistoryText.dateTime(conversation.startedAt), style = MaterialTheme.typography.titleLarge)
         Text("Tap an entry for its details.", style = MaterialTheme.typography.bodySmall)
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = WindowInsets.navigationBars.only(WindowInsetsSides.Bottom).asPaddingValues()) {
             turns.forEachIndexed { i, (turn, rows) ->
                 item(key = "turn-$i") {
                     Text(

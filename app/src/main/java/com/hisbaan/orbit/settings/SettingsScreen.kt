@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -49,10 +50,10 @@ fun SettingsScreen(
 ) {
     val draft = state.draft ?: return
     state.haSignIn?.let { signIn ->
-        return HaSignInScreen(signIn, vm::onHaSignInNavigation, vm::cancelHaSignIn, modifier)
+        return HaSignInScreen(signIn, vm::onHaSignInNavigation, vm::cancelHaSignIn, modifier.navigationBarsPadding())
     }
     Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
