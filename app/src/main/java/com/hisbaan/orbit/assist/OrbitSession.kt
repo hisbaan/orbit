@@ -136,8 +136,8 @@ class OrbitSession(context: Context) :
         isShown = true
         cardVisibility.targetState = true
         if (args?.getBoolean(ARG_RESUME) == true) {
-            // Back after stepping aside for the unlock prompt: the turn is still going.
-            EventLog.log("assist", "Overlay back after unlocking")
+            // Back after stepping aside (an unlock prompt, a tool working in the app below): the turn is still going.
+            EventLog.log("assist", "Overlay back mid-turn")
             return
         }
         val source = args?.getString(ARG_SOURCE) ?: if (showFlags and SHOW_SOURCE_ASSIST_GESTURE != 0) "assist gesture" else "session"

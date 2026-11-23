@@ -20,6 +20,7 @@ import com.hisbaan.orbit.settings.SettingsRepository
 import com.hisbaan.orbit.settings.SearchSource
 import com.hisbaan.orbit.settings.WeatherSource
 import com.hisbaan.orbit.speech.TtsSpeaker
+import com.hisbaan.orbit.tools.AddStopTool
 import com.hisbaan.orbit.tools.CalendarAccess
 import com.hisbaan.orbit.tools.CalendarEventsTool
 import com.hisbaan.orbit.tools.CallContactTool
@@ -31,12 +32,17 @@ import com.hisbaan.orbit.tools.LatestForecast
 import com.hisbaan.orbit.tools.MediaControlTool
 import com.hisbaan.orbit.tools.MediaInfoTool
 import com.hisbaan.orbit.tools.MediaSessions
+import com.hisbaan.orbit.tools.NavigationStatusTool
 import com.hisbaan.orbit.tools.NavigationTool
 import com.hisbaan.orbit.tools.NotificationsTool
 import com.hisbaan.orbit.tools.OpenAppTool
 import com.hisbaan.orbit.tools.PlayMusicTool
 import com.hisbaan.orbit.tools.PlaySavedPlaylistTool
 import com.hisbaan.orbit.tools.ReadScreenTool
+import com.hisbaan.orbit.tools.ReportRoadIssueTool
+import com.hisbaan.orbit.tools.RouteOptionsTool
+import com.hisbaan.orbit.tools.ScreenControlService
+import com.hisbaan.orbit.tools.SearchAlongRouteTool
 import com.hisbaan.orbit.tools.SetAlarmTool
 import com.hisbaan.orbit.tools.SetTimerTool
 import com.hisbaan.orbit.tools.ShowWeatherCardTool
@@ -118,6 +124,11 @@ class OrbitApp : Application() {
             PlayMusicTool(this, mediaSessions, YouTubeMusicSearch(httpClient)) { settings.current().musicPackage },
             PlaySavedPlaylistTool(this, mediaSessions) { settings.latest.value?.savedPlaylists.orEmpty() },
             NavigationTool(this),
+            SearchAlongRouteTool(this),
+            AddStopTool(this),
+            ReportRoadIssueTool(this),
+            RouteOptionsTool(this),
+            NavigationStatusTool(this),
             SetTimerTool(this),
             SetAlarmTool(this),
             CreateReminderTool(this),
@@ -179,6 +190,7 @@ class OrbitApp : Application() {
                 override val isShown get() = OrbitSession.isShown
                 override fun resume() = OrbitVoiceInteractionService.resumeOverlay()
             }
+            ScreenControlService.besideOverlay = { block -> besideOverlay(block) }
         }
     }
 

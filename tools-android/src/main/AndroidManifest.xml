@@ -24,9 +24,16 @@
         <intent>
             <action android:name="android.intent.action.CREATE_REMINDER" />
         </intent>
+        <!-- MapsNav brings Maps' navigation screen back to the front. -->
+        <package android:name="com.google.android.apps.maps" />
     </queries>
 
     <application>
+        <!-- Play services fetches the text recognition model (MapsCallouts) at install, not on first use. -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="ocr" />
+
         <!--
             Notification access: lets Orbit reach other apps' media sessions
             (MediaSessionManager.getActiveSessions) and read notifications aloud.

@@ -25,6 +25,8 @@ dependencies {
     implementation(project(":diagnostics"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
+    // Reads the labels Maps draws on the map (MapsCallouts). The model comes with Play services.
+    implementation(libs.mlkit.text.recognition)
 
     testImplementation(libs.junit)
 }

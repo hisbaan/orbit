@@ -115,6 +115,21 @@ class Assistant(
     @Volatile
     var overlay: Overlay? = null
 
+    /**
+     * Runs [block] with the overlay moved aside, for a tool that touches the app under it (Maps
+     * draws some of its screen without views, and opens some menus to a touch only), then brings
+     * the overlay back, as around an unlock prompt.
+     */
+    suspend fun besideOverlay(block: suspend () -> Unit) {
+        val wasShown = overlay?.isShown == true
+        if (wasShown) _dismissRequests.tryEmit(Unit)
+        try {
+            block()
+        } finally {
+            if (wasShown) overlay?.resume()
+        }
+    }
+
     init {
         // Bind the HFP proxy now so a headset trigger doesn't wait for it.
         scope.launch { headsetProfile.get() }

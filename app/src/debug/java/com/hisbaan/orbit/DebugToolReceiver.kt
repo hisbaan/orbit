@@ -39,6 +39,13 @@ import kotlinx.serialization.json.jsonObject
  * `--ei tail <ms>` is how long the audio runs on after the speech (default 4000), then the
  * stream closes; `--ei noise <dBFS>` lays white noise under all of it. A `|` in the text is a
  * pause (`--ei pause <ms>`, default 800): "set an alarm for 7 30|am".
+ *
+ * `--es tool a11yDump [--es pkg <package>]` logs every labelled or clickable node in that app's
+ * windows (default Google Maps) as Orbit's accessibility service sees them. `uiautomator dump`
+ * suppresses accessibility services while it runs, and Maps closes its sheets when that happens.
+ * `--es tool a11yClick --es label <text, description or view id> [--es action scroll|scrollback|expand|tap|find]
+ * [--es pkg <package>]` clicks the first node with that label (or the row around it) the way
+ * Orbit's tools do, or scrolls, expands or taps it, or logs where it is.
  */
 class DebugToolReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -74,6 +81,10 @@ class DebugToolReceiver : BroadcastReceiver() {
                     recognizeSpoken(app, intent.getStringExtra("text").orEmpty(), intent.getIntExtra("tail", 4_000), intent.getIntExtra("noise", 0), intent.getIntExtra("pause", 800))
                 } else if (name == "browse") {
                     probeBrowser(app, intent.getStringExtra("pkg") ?: "com.google.android.apps.youtube.music")
+                } else if (name == "a11yDump") {
+                    dumpWindows(intent.getStringExtra("pkg") ?: "com.google.android.apps.maps")
+                } else if (name == "a11yClick") {
+                    clickLabel(intent.getStringExtra("pkg") ?: "com.google.android.apps.maps", intent.getStringExtra("label").orEmpty(), intent.getStringExtra("action"))
                 } else {
                     // As a turn does: tools that read settings synchronously (Home Assistant) need them loaded.
                     app.settings.current()
@@ -100,6 +111,58 @@ class DebugToolReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }
+    }
+
+    /** Logs [pkg]'s windows, node by node, through Orbit's own accessibility service. */
+    private suspend fun dumpWindows(pkg: String) = withContext(Dispatchers.Main) {
+        val service = com.hisbaan.orbit.tools.ScreenControlService.connected
+            ?: return@withContext EventLog.log("debug", "a11yDump: accessibility service not connected")
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) service.clearCache()
+        val windows = service.windows.filter { it.root?.packageName == pkg }
+        EventLog.log("debug", "a11yDump: ${windows.size} window(s) of $pkg")
+        val bounds = android.graphics.Rect()
+        fun walk(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int) {
+            val text = node.text?.toString().orEmpty()
+            val desc = node.contentDescription?.toString().orEmpty()
+            val id = node.viewIdResourceName?.substringAfter(":id/").orEmpty()
+            if (text.isNotEmpty() || desc.isNotEmpty() || id.isNotEmpty() || node.isClickable) {
+                node.getBoundsInScreen(bounds)
+                val flags = listOfNotNull(
+                    "CLK".takeIf { node.isClickable },
+                    "checked=${node.isChecked}".takeIf { node.isCheckable },
+                    "hidden".takeUnless { node.isVisibleToUser },
+                    node.actionList.filter { it.id != android.view.accessibility.AccessibilityNodeInfo.ACTION_FOCUS && it.id != android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS }
+                        .takeIf { node.isClickable || node.isScrollable }
+                        ?.joinToString(",", "{", "}") { a -> a.label?.toString() ?: android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction(a.id, null).toString().substringAfter("Action: ").substringBefore(" ").ifEmpty { "${a.id}" } },
+                ).joinToString(" ")
+                EventLog.log("debug", "a11yDump ${"  ".repeat(depth)}'$text' | '$desc' | $id | ${node.className?.toString()?.substringAfterLast('.')} $flags ${bounds.toShortString()}")
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let { walk(it, depth + 1) }
+        }
+        windows.forEach { w ->
+            EventLog.log("debug", "a11yDump window type=${w.type} layer=${w.layer} title=${w.title}")
+            w.root?.let { walk(it, 0) }
+        }
+    }
+
+    private suspend fun clickLabel(pkg: String, label: String, action: String?) = withContext(Dispatchers.Main) {
+        val service = com.hisbaan.orbit.tools.ScreenControlService.connected
+            ?: return@withContext EventLog.log("debug", "a11yClick: accessibility service not connected")
+        val node = service.findNode(pkg, visibleOnly = false) {
+            it.text?.toString() == label || it.contentDescription?.toString() == label || it.viewIdResourceName == "$pkg:id/$label"
+        } ?: return@withContext EventLog.log("debug", "a11yClick: no '$label'")
+        val done = when (action) {
+            "scroll" -> node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            "scrollback" -> node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+            "expand" -> node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_EXPAND)
+            "tap" -> android.graphics.Rect().also(node::getBoundsInScreen).let { service.tap(it.exactCenterX(), it.exactCenterY()) }
+            "find" -> generateSequence(node) { it.parent }.joinToString(" < ") { n ->
+                "${n.className?.toString()?.substringAfterLast('.')}#${n.viewIdResourceName?.substringAfter(":id/")}" +
+                    "${android.graphics.Rect().also(n::getBoundsInScreen).toShortString()}${if (n.isVisibleToUser) "" else "(hidden)"}"
+            }
+            else -> service.clickRow(node)
+        }
+        EventLog.log("debug", "a11yClick '$label' ${action ?: "click"}: $done")
     }
 
     /** Synthesizes [text] and runs it through [OnDeviceStt] at real-time pace, between stretches of silence. */

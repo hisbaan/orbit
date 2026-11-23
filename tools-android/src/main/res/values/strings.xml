@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="screen_control_description">Lets Orbit press buttons in other apps for you, such as Save when it adds a reminder to Google Tasks. Orbit only looks at the app it\'s acting in, and only while it acts.</string>
+    <string name="screen_control_description">Lets Orbit press buttons in other apps for you, such as Save when it adds a reminder to Google Tasks, or a stop and a road report in Google Maps. Orbit only looks at the app it\'s acting in, and only while it acts.</string>
 </resources>
